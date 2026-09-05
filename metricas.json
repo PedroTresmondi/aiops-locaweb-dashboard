@@ -1,0 +1,13 @@
+{
+  "mae_d1": 197.8,
+  "mape_d1": 19.8,
+  "mae_d7": 168.6,
+  "mape_d7": 16.8,
+  "roc_auc_ola": 0.776,
+  "recall_viola_ola": 0.677,
+  "precision_viola_ola": 0.023,
+  "n_incidentes_total": 122543,
+  "n_incidentes_regime_atual": 121,
+  "pct_ruido_monitoramento": 85.1,
+  "pct_sem_intervencao_monitoramento": 77.0
+}
