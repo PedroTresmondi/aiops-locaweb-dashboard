@@ -9,8 +9,31 @@ import plotly.express as px
 import streamlit as st
 
 BASE = Path(__file__).parent
-DADOS = BASE / "dados"
-MODELOS = BASE / "modelos"
+
+
+def _resolver_pasta(nome: str, arquivo_referencia: str) -> Path:
+    """Encontra a pasta 'dados' ou 'modelos' testando vários layouts possíveis de
+    deploy: subpasta normal, dentro de app/, ou tudo solto junto do app.py."""
+    candidatos = [
+        BASE / nome,
+        BASE / "app" / nome,
+        BASE.parent / nome,
+        BASE,
+        Path.cwd() / nome,
+        Path.cwd() / "app" / nome,
+        Path.cwd(),
+    ]
+    for candidato in candidatos:
+        if (candidato / arquivo_referencia).exists():
+            return candidato
+    raise FileNotFoundError(
+        f"Não encontrei '{arquivo_referencia}' em nenhum destes locais: "
+        + ", ".join(str(c) for c in candidatos)
+    )
+
+
+DADOS = _resolver_pasta("dados", "dataset_limpo.parquet")
+MODELOS = _resolver_pasta("modelos", "rf_d1.joblib")
 
 st.set_page_config(page_title="AIOps Locaweb — Painel Operacional", page_icon="📈", layout="wide")
 
