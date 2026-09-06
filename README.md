@@ -14,13 +14,29 @@ Aplicação pública: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
 - **3.685 violações dentro do universo elegível**, equivalentes a **14,31%**.
 - **7.090 violações na base completa**, equivalentes a **5,79%**. Esse número não é usado
   como numerador da taxa sobre elegíveis.
-- Previsões recalculadas em execução pela Regressão Linear vencedora da Sprint 3, com
-  18 features temporais sem vazamento de alvo.
+- Previsões recalculadas em execução por ensembles operacionais validados no tempo. A
+  Regressão Linear vencedora da Sprint 3 permanece reproduzida como baseline auditável.
 
 O app identifica explicitamente cada elemento como observado, resultado do modelo, cenário
 ou recomendação. Não há geração de métricas sintéticas nem chamadas a IA generativa.
 
-## Validação temporal reproduzida
+## Modelo operacional validado
+
+Os pesos foram escolhidos em três validações móveis de outubro/novembro de 2025. Dezembro
+ficou completamente separado como holdout final:
+
+| Horizonte | Ensemble | MAE | RMSE | R² | WAPE | MAE da Linear | Ganho |
+|---|---|---:|---:|---:|---:|---:|---:|
+| D+1 | 30% Linear Sprint 3 + 70% Ridge operacional | 115,35 | 149,26 | 0,045 | 13,09% | 134,49 | 14,23% |
+| Dia +7 | 20% Linear Sprint 3 + 80% Extra Trees pós-setembro | 128,98 | 175,95 | −0,327 | 14,64% | 131,64 | 2,02% |
+
+As features operacionais usam apenas dados conhecidos ao fechar o dia-base: volume atual,
+elegíveis, OLA-base, lags, médias móveis, volatilidade e calendário do dia-alvo. O ganho vem
+principalmente de incorporar o dia-base e de tratar separadamente o regime pós-setembro.
+O critério de seleção é MAE. O R² do dia +7 fica negativo no único mês de holdout — uma
+limitação mantida visível — e o ensemble precisa ser revalidado com novos meses.
+
+## Benchmark amplo da Sprint 3 reproduzido
 
 | Horizonte | MAE | RMSE | R² | Viés médio (real − previsto) |
 |---|---:|---:|---:|---:|
@@ -32,11 +48,11 @@ Random Forest, Gradient Boosting e Extra Trees são recalculados como benchmark;
 R² negativo nesse corte. O histórico contém uma quebra de regime forte em setembro de 2025,
 por isso o app também mostra o viés e faixas empíricas de 80%, não apenas o ponto previsto.
 
-Com o snapshot atual, o modelo final — reajustado depois da validação com todos os alvos já
-conhecidos — estima:
+Com o snapshot atual, os componentes finais — reajustados depois da validação com todos os
+alvos já conhecidos — estimam:
 
-- **D+1 (01/01/2026): 962**, faixa empírica de **914 a 1.424** incidentes;
-- **dia +7 (07/01/2026): 1.313**, faixa empírica de **929 a 1.398** incidentes.
+- **D+1 (01/01/2026): 914**, faixa empírica de **762 a 1.084** incidentes;
+- **dia +7 (07/01/2026): 970**, faixa empírica de **799 a 1.233** incidentes.
 
 Essas datas são consequência do limite da base, não previsões ao vivo para a data atual.
 `Dia +7` significa o volume daquele dia, e não a soma dos próximos sete dias. O modelo não
@@ -55,8 +71,9 @@ aiops-locaweb-dashboard/
 └── README.md
 ```
 
-Os antigos artefatos de Random Forest foram removidos da versão ativa para não misturar um
-experimento posterior de 21 dias com o modelo e a janela definidos na Sprint 3.
+Os antigos artefatos isolados de Random Forest foram removidos para não misturar um experimento
+posterior de 21 dias com a validação atual. O novo pipeline recalcula baseline, componentes,
+pesos, holdout e previsões diretamente da base.
 
 ## Rodar localmente
 

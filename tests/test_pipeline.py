@@ -41,6 +41,16 @@ class TestPipelineReal(unittest.TestCase):
             self.assertGreater(previsao["ponto"], 0)
             self.assertLess(previsao["limite_inferior_80"], previsao["ponto"])
             self.assertGreater(previsao["limite_superior_80"], previsao["ponto"])
+        self.assertEqual(round(self.resultado.previsoes["D+1"]["ponto"]), 914)
+        self.assertEqual(round(self.resultado.previsoes["D+7"]["ponto"]), 970)
+
+    def test_ensemble_supera_baseline_no_holdout(self):
+        metricas = self.resultado.metricas_operacionais.set_index("horizonte")
+        self.assertAlmostEqual(metricas.loc["D+1", "peso_baseline"], 0.3)
+        self.assertAlmostEqual(metricas.loc["D+7", "peso_baseline"], 0.2)
+        self.assertAlmostEqual(metricas.loc["D+1", "holdout_MAE"], 115.353457, places=5)
+        self.assertAlmostEqual(metricas.loc["D+7", "holdout_MAE"], 128.983796, places=5)
+        self.assertTrue((metricas["ganho_mae"] > 0).all())
 
 
 if __name__ == "__main__":

@@ -234,6 +234,7 @@ previsao_d1 = modelo.previsoes["D+1"]
 previsao_d7 = modelo.previsoes["D+7"]
 tendencias = tendencias_recentes(df)
 metricas_idx = modelo.metricas.set_index("horizonte")
+metricas_op_idx = modelo.metricas_operacionais.set_index("horizonte")
 
 
 with st.sidebar:
@@ -263,7 +264,7 @@ if pagina == "Central operacional":
     st.markdown(
         f"""<div class="context-strip">
         <span class="pill">OBSERVADO · base até {snapshot:%d/%m/%Y}</span>
-        <span class="pill pill-model">MODELO · Regressão Linear validada no tempo</span>
+        <span class="pill pill-model">MODELO · ensemble operacional validado no tempo</span>
         <span class="pill pill-alert">ATENÇÃO · não é integração ao vivo</span>
         </div>""",
         unsafe_allow_html=True,
@@ -330,41 +331,57 @@ if pagina == "Central operacional":
 elif pagina == "Modelo & previsão":
     cabecalho("Modelo & previsão", "Validação fora da amostra, comparação de algoritmos e fatores que movem a estimativa.", "Evidência do modelo")
     st.markdown(
-        f"""<div class="context-strip">
-        <span class="pill">TREINO · até {modelo.corte_treino:%d/%m/%Y}</span>
-        <span class="pill">TESTE · {modelo.inicio_teste:%d/%m/%Y}–{modelo.fim_teste:%d/%m/%Y}</span>
-        <span class="pill pill-model">18 FEATURES · sem variável futura</span>
+        """<div class="context-strip">
+        <span class="pill">SELEÇÃO · validações móveis em out/nov 2025</span>
+        <span class="pill">HOLDOUT FINAL · 01–31/12/2025</span>
+        <span class="pill pill-model">ENSEMBLE · pesos escolhidos antes do holdout</span>
         </div>""",
         unsafe_allow_html=True,
     )
-    met_d1, met_d7 = metricas_idx.loc["D+1"], metricas_idx.loc["D+7"]
+    met_d1, met_d7 = metricas_op_idx.loc["D+1"], metricas_op_idx.loc["D+7"]
     m1, m2 = st.columns(2)
-    m1.metric("D+1 · MAE", fmt_num(met_d1["MAE"], 1), "incidentes/dia", delta_color="off")
-    m2.metric("D+1 · R²", fmt_num(met_d1["R2"], 3), "teste temporal", delta_color="off")
+    m1.metric("D+1 · MAE no holdout", fmt_num(met_d1["holdout_MAE"], 1), f"{fmt_pct(met_d1['ganho_mae'])} menor que o baseline", delta_color="off")
+    m2.metric("D+1 · WAPE", fmt_pct(met_d1["holdout_WAPE"], 1), "dezembro não visto", delta_color="off")
     m3, m4 = st.columns(2)
-    m3.metric("D+7 · MAE", fmt_num(met_d7["MAE"], 1), "incidentes/dia", delta_color="off")
-    m4.metric("D+7 · R²", fmt_num(met_d7["R2"], 3), "teste temporal", delta_color="off")
-    st.info("A Regressão Linear venceu no corte temporal amplo da Sprint 3. Modelos de árvore tiveram R² negativo porque o teste contém uma escala de volume muito acima do treino; árvores extrapolam mal fora da faixa já observada.")
+    m3.metric("Dia +7 · MAE no holdout", fmt_num(met_d7["holdout_MAE"], 1), f"{fmt_pct(met_d7['ganho_mae'])} menor que o baseline", delta_color="off")
+    m4.metric("Dia +7 · WAPE", fmt_pct(met_d7["holdout_WAPE"], 1), "dezembro não visto", delta_color="off")
+    st.info(
+        "O modelo operacional é híbrido: D+1 combina 30% da Linear da Sprint 3 com 70% de Ridge usando o dia-base; "
+        "dia +7 combina 20% da Linear com 80% de Extra Trees treinado no regime pós-setembro. Os pesos foram escolhidos "
+        "em validações móveis de outubro/novembro; dezembro só foi aberto para o teste final."
+    )
 
     tab_backtest, tab_benchmark, tab_explicacao = st.tabs(["Previsto × observado", "Benchmark", "Explicabilidade"])
     with tab_backtest:
         col_filtro, col_texto = st.columns([1, 2.3])
         with col_filtro:
             horizonte = st.selectbox("Horizonte", ["D+1", "D+7"])
-            janela = st.slider("Últimos dias exibidos", 30, 212, 120)
-        bt = modelo.backtest[modelo.backtest["horizonte"] == horizonte].tail(janela)
-        med = metricas_idx.loc[horizonte]
+        bt = modelo.backtest_operacional[modelo.backtest_operacional["horizonte"] == horizonte]
+        med = metricas_op_idx.loc[horizonte]
         with col_texto:
-            direcao = "abaixo" if med["vies_real_menos_previsto"] > 0 else "acima"
+            direcao = "abaixo" if med["holdout_vies_real_menos_previsto"] > 0 else "acima"
             st.markdown(
-                f"<div class='source-box'><b>Leitura:</b> no teste, o modelo ficou em média <b>{fmt_num(abs(med['vies_real_menos_previsto']), 1)} incidentes {direcao} do observado</b>. O viés é mostrado porque apenas MAE/RMSE não revela a direção do erro.</div>",
+                f"<div class='source-box'><b>Holdout de dezembro:</b> o ensemble ficou em média <b>{fmt_num(abs(med['holdout_vies_real_menos_previsto']), 1)} incidentes {direcao} do observado</b>. "
+                f"MAE da Linear da Sprint 3 no mesmo período: {fmt_num(med['baseline_holdout_MAE'], 1)}.</div>",
                 unsafe_allow_html=True,
             )
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=bt["data_alvo"], y=bt["real"], name="Observado", line=dict(color=NAVY, width=2)))
-        fig.add_trace(go.Scatter(x=bt["data_alvo"], y=bt["previsto"], name="Previsto", line=dict(color=ORANGE, width=2)))
+        fig.add_trace(go.Scatter(x=bt["data_alvo"], y=bt["baseline"], name="Linear Sprint 3", line=dict(color=MUTED, width=1.5, dash="dot")))
+        fig.add_trace(go.Scatter(x=bt["data_alvo"], y=bt["previsto"], name="Ensemble operacional", line=dict(color=ORANGE, width=2.5)))
         st.plotly_chart(estilizar_figura(fig, 430), width="stretch")
     with tab_benchmark:
+        st.markdown("#### Resultado operacional no holdout final")
+        tabela_op = modelo.metricas_operacionais[["horizonte", "modelo", "cv_mae", "holdout_MAE", "holdout_RMSE", "holdout_R2", "holdout_WAPE", "baseline_holdout_MAE", "ganho_mae"]].copy()
+        tabela_op.columns = ["Horizonte", "Modelo operacional", "MAE validações", "MAE dezembro", "RMSE dezembro", "R² dezembro", "WAPE dezembro", "MAE baseline", "Ganho vs. baseline"]
+        for coluna in ["MAE validações", "MAE dezembro", "RMSE dezembro", "MAE baseline"]:
+            tabela_op[coluna] = tabela_op[coluna].map(lambda x: fmt_num(x, 1))
+        tabela_op["R² dezembro"] = tabela_op["R² dezembro"].map(lambda x: fmt_num(x, 3))
+        for coluna in ["WAPE dezembro", "Ganho vs. baseline"]:
+            tabela_op[coluna] = tabela_op[coluna].map(lambda x: fmt_pct(x, 1))
+        st.dataframe(tabela_op, width="stretch", hide_index=True)
+        st.caption("O critério operacional de seleção foi MAE. Em um único mês com variância limitada, o R² pode ser baixo ou negativo mesmo quando o erro absoluto melhora; por isso todas as métricas permanecem visíveis.")
+        st.markdown("#### Benchmark amplo reproduzido da Sprint 3")
         bench = modelo.benchmark.copy()
         fig = px.bar(
             bench, x="RMSE", y="modelo", color="horizonte", barmode="group", orientation="h",
@@ -377,26 +394,32 @@ elif pagina == "Modelo & previsão":
         tabela_bench["RMSE"] = tabela_bench["RMSE"].map(lambda x: fmt_num(x, 1))
         tabela_bench["R2"] = tabela_bench["R2"].map(lambda x: fmt_num(x, 3))
         st.dataframe(tabela_bench, width="stretch", hide_index=True)
+        st.caption(f"Benchmark amplo: treino até {modelo.corte_treino:%d/%m/%Y}; teste de {modelo.inicio_teste:%d/%m/%Y} a {modelo.fim_teste:%d/%m/%Y}.")
     with tab_explicacao:
         horizonte_coef = st.selectbox("Explicar horizonte", ["D+1", "D+7"], key="coef_h")
-        coef = modelo.coeficientes[modelo.coeficientes["horizonte"] == horizonte_coef].nlargest(12, "impacto_absoluto").sort_values("coeficiente")
+        coef = modelo.importancias_operacionais[modelo.importancias_operacionais["horizonte"] == horizonte_coef].nlargest(12, "impacto_absoluto").sort_values("valor")
         fig = px.bar(
-            coef, x="coeficiente", y="variavel", orientation="h", color="coeficiente",
+            coef, x="valor", y="variavel", orientation="h", color="valor",
             color_continuous_scale=[[0, RED], [0.5, "#D9E1EA"], [1, TEAL]],
-            labels={"coeficiente": "Coeficiente padronizado", "variavel": ""},
+            labels={"valor": coef["tipo"].iloc[0], "variavel": ""},
         )
         fig.update_coloraxes(showscale=False)
         st.plotly_chart(estilizar_figura(fig, 440, legenda=False), width="stretch")
-        st.caption("Sinal positivo aumenta a previsão; sinal negativo reduz. Coeficientes padronizados permitem comparar magnitudes, mas não provam causalidade.")
+        if horizonte_coef == "D+1":
+            st.caption("No componente Ridge, o sinal indica direção e a magnitude é comparável após padronização. Isso descreve associação, não causalidade.")
+        else:
+            st.caption("No Extra Trees, a importância indica quanto uma variável foi usada para reduzir erro; não possui sinal positivo/negativo e não prova causalidade.")
 
     with st.expander("Metodologia auditável"):
         st.markdown(
             """
 - Série diária contínua entre 02/01/2023 e 31/12/2025; dias sem incidente recebem zero.
-- Features: calendário, defasagens de 1 e 7 dias, médias móveis de 7/14/30 dias e tendência 7d–14d.
-- Todas as médias móveis usam `shift(1)`: o dia previsto nunca entra em sua própria explicação.
-- Validação: primeiros 80% para treino e últimos 20% para teste, sem embaralhamento.
-- Após a validação, o modelo final é reajustado com todos os alvos já conhecidos.
+- A Linear da Sprint 3 e suas 18 features continuam reproduzidas como baseline e benchmark amplo 80/20.
+- O componente operacional usa apenas informação disponível ao fechar o dia-base: volume, KPI, OLA-base, lags, médias, volatilidade e calendário do alvo.
+- Seleção dos pesos: três janelas móveis em out/nov de 2025. Holdout final: todos os 31 dias de dezembro, nunca usados na seleção.
+- A amostra pós-quebra ainda é curta; o ensemble precisa ser revalidado quando chegarem novos meses.
+- D+1: 30% Linear + 70% Ridge. Dia +7: 20% Linear + 80% Extra Trees do regime iniciado em setembro.
+- Após a avaliação, os componentes finais são reajustados com todos os alvos conhecidos. As faixas vêm somente dos resíduos de out/nov.
 - As previsões apontam para 01/01/2026 e 07/01/2026 porque este é o limite do snapshot fornecido.
 """
         )
@@ -450,7 +473,7 @@ elif pagina == "Plano de ação":
         with c1:
             card_acao(
                 "1 · dimensionar capacidade", f"Planejar para a faixa de {fmt_int(previsao_d1['limite_inferior_80'])}–{fmt_int(previsao_d1['limite_superior_80'])}",
-                f"Ponto central do modelo: {fmt_int(previsao_d1['ponto'])} incidentes para {previsao_d1['data_alvo']:%d/%m/%Y}. Manter margem porque o MAE fora da amostra foi {fmt_num(metricas_idx.loc['D+1', 'MAE'], 1)}.", "red",
+                f"Ponto central do modelo: {fmt_int(previsao_d1['ponto'])} incidentes para {previsao_d1['data_alvo']:%d/%m/%Y}. Manter margem porque o MAE no holdout foi {fmt_num(metricas_op_idx.loc['D+1', 'holdout_MAE'], 1)}.", "red",
             )
             card_acao(
                 "2 · fila dourada", f"Cruzar {cat_crit['entidade']} com {prod_crit['entidade']}",
