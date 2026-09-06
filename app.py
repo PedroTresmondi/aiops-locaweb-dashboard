@@ -46,6 +46,20 @@ DIAS_PT = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo
 def carregar_base_bruta():
     df = pd.read_parquet(DADOS / "dataset_limpo.parquet")
     df["Aberto"] = pd.to_datetime(df["Aberto"])
+
+    # Métricas oficiais da Sprint 4: recalculadas conforme o Dicionário de Dados v2.
+    # Mantemos as flags brutas no arquivo para auditoria, mas não as usamos nos KPIs.
+    if "OLA_Violado_Regra" not in df.columns:
+        limites_horas = df["Prioridade_Cod"].map({1: 4, 2: 4, 3: 12, 4: 24, 5: 96})
+        df["OLA_Violado_Regra"] = df["Duracao_Horas"].gt(limites_horas)
+    if "Elegivel_KPI_Regra" not in df.columns:
+        # Compatibilidade com versões antigas do parquet. A versão atual publicada
+        # contém a regra completa, incluindo incidente pai e status.
+        df["Elegivel_KPI_Regra"] = df["Entrou_KPI"].astype(bool)
+    if "OLA_Violado_KPI_Regra" not in df.columns:
+        df["OLA_Violado_KPI_Regra"] = (
+            df["OLA_Violado_Regra"].astype(bool) & df["Elegivel_KPI_Regra"].astype(bool)
+        )
     return df
 
 @st.cache_data
@@ -57,10 +71,9 @@ def carregar_serie():
 def carregar_auxiliares():
     teste_d1 = pd.read_csv(DADOS / "teste_previsao_d1.csv", index_col=0, parse_dates=True)
     teste_d7 = pd.read_csv(DADOS / "teste_previsao_d7.csv", index_col=0, parse_dates=True)
-    ranking = pd.read_csv(DADOS / "ranking_categorias_risco.csv")
     with open(DADOS / "metricas.json") as f:
         metricas = json.load(f)
-    return teste_d1, teste_d7, ranking, metricas
+    return teste_d1, teste_d7, metricas
 
 @st.cache_resource
 def carregar_modelos():
@@ -71,7 +84,7 @@ def carregar_modelos():
 
 df_raw = carregar_base_bruta()
 serie = carregar_serie()
-teste_d1, teste_d7, ranking, metricas = carregar_auxiliares()
+teste_d1, teste_d7, metricas = carregar_auxiliares()
 rf_d1, rf_d7, FEATURES = carregar_modelos()
 
 # ---------------------------------------------------------------
@@ -108,6 +121,31 @@ def calcular_categorias_em_alta(min_incidentes=20):
     return comp.sort_values("variacao_%", ascending=False)
 
 tendencias = calcular_categorias_em_alta()
+
+
+@st.cache_data
+def calcular_ranking_ola(min_incidentes=30):
+    """Ranking coerente com a regra oficial de elegibilidade e duração do OLA."""
+    base = df_raw[
+        df_raw["Elegivel_KPI_Regra"].astype(bool) &
+        df_raw["Categoria"].notna()
+    ].copy()
+    ranking = (
+        base.groupby("Categoria")
+        .agg(
+            incidentes=("Categoria", "size"),
+            violacoes=("OLA_Violado_KPI_Regra", "sum"),
+        )
+        .reset_index()
+    )
+    ranking = ranking[ranking["incidentes"] >= min_incidentes].copy()
+    ranking["taxa_violacao_%"] = (
+        ranking["violacoes"] / ranking["incidentes"] * 100
+    ).round(2)
+    return ranking.sort_values(["violacoes", "taxa_violacao_%"], ascending=False)
+
+
+ranking_ola = calcular_ranking_ola()
 
 # ---------------------------------------------------------------
 # Cabeçalho
@@ -197,11 +235,15 @@ with tab_explorar:
     if equipes:
         filtrado = filtrado[filtrado["Grupo designado"].isin(equipes)]
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Incidentes no filtro", f"{len(filtrado):,}".replace(",", "."))
     m2.metric("Duração média", f"{filtrado['Duracao_Horas'].mean():.1f} h" if len(filtrado) else "—")
     m3.metric("% sem intervenção", f"{(filtrado['Status'] == 'Sem Intervenção').mean()*100:.1f}%" if len(filtrado) else "—")
-    m4.metric("% violaram OLA", f"{filtrado['KPI_Violado'].mean()*100:.2f}%" if len(filtrado) else "—")
+    m4.metric("% OLA — base", f"{filtrado['OLA_Violado_Regra'].mean()*100:.2f}%" if len(filtrado) else "—")
+    elegiveis_filtro = filtrado["Elegivel_KPI_Regra"].astype(bool)
+    taxa_ola_kpi = filtrado.loc[elegiveis_filtro, "OLA_Violado_KPI_Regra"].mean()
+    m5.metric("% OLA — dentro do KPI", f"{taxa_ola_kpi*100:.2f}%" if elegiveis_filtro.any() else "—")
+    st.caption("OLA recalculado pelo dicionário: 4h (P1/P2), 12h (P3), 24h (P4) e 96h (P5).")
 
     if len(filtrado) > 0:
         diario_filtro = filtrado.groupby(filtrado["Aberto"].dt.date).size()
@@ -254,6 +296,10 @@ with tab_tend:
 # ---------------------------------------------------------------
 with tab_prev:
     st.subheader("Previsto vs. Real — período de teste (últimos 21 dias do histórico)")
+    st.caption(
+        "Modelo operacional: Random Forest retreinada no regime recente. "
+        "No benchmark histórico amplo da Sprint 3, a Regressão Linear foi a que melhor generalizou."
+    )
     colA, colB = st.columns(2)
     with colA:
         fig = go.Figure()
@@ -304,9 +350,12 @@ with tab_prev:
 # ---------------------------------------------------------------
 with tab_ola:
     st.subheader("Ranking de categorias por risco de violação de OLA")
-    st.caption("Base: incidentes elegíveis a KPI (prioridades 2 e 3), mínimo de 30 ocorrências por categoria")
+    st.caption(
+        "Base: incidentes elegíveis ao KPI conforme o Dicionário de Dados v2 "
+        "(prioridades 1–3, sem incidente pai e com intervenção), mínimo de 30 ocorrências por categoria"
+    )
 
-    ranking_top = ranking.sort_values("violacoes", ascending=False).head(10)
+    ranking_top = ranking_ola.head(10)
     fig = go.Figure(go.Bar(
         x=ranking_top["violacoes"], y=ranking_top["Categoria"], orientation="h", marker_color="#C8102E",
         text=[f"{t}% de taxa" for t in ranking_top["taxa_violacao_%"]], textposition="outside",
@@ -314,14 +363,20 @@ with tab_ola:
     fig.update_layout(height=420, margin=dict(t=20), yaxis=dict(autorange="reversed"), xaxis_title="Nº de violações")
     st.plotly_chart(fig, width="stretch")
 
-    col1, col2 = st.columns(2)
-    col1.metric("Recall do modelo (violações capturadas)", f"{metricas['recall_viola_ola']*100:.0f}%")
-    col2.metric("Precisão do modelo", f"{metricas['precision_viola_ola']*100:.1f}%")
-    st.warning(
-        "**Leitura honesta:** violação de OLA é um evento raro (~1% dos casos). O modelo foi calibrado "
-        "para priorizar recall (captura a maioria das violações reais) ao custo de mais falsos positivos."
-    )
-    st.dataframe(ranking.sort_values("violacoes", ascending=False), width="stretch", hide_index=True)
+    elegiveis_total = int(df_raw["Elegivel_KPI_Regra"].sum())
+    violacoes_kpi = int(df_raw["OLA_Violado_KPI_Regra"].sum())
+    violacoes_total = int(df_raw["OLA_Violado_Regra"].sum())
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Incidentes elegíveis ao KPI", f"{elegiveis_total:,}".replace(",", "."))
+    col2.metric("Violações dentro do KPI", f"{violacoes_kpi:,}".replace(",", "."))
+    col3.metric("Taxa dentro do KPI", f"{violacoes_kpi/elegiveis_total*100:.2f}%")
+    leitura_ola = (
+        f"**Leitura auditável:** {violacoes_total:,} violações em toda a base "
+        f"({violacoes_total/len(df_raw)*100:.2f}%). O ranking aplica regras determinísticas do dicionário; "
+        "um classificador preditivo futuro deverá ser retreinado com este alvo corrigido."
+    ).replace(",", ".")
+    st.info(leitura_ola)
+    st.dataframe(ranking_ola, width="stretch", hide_index=True)
 
 # ---------------------------------------------------------------
 # TAB — Recomendações (dinâmicas + síntese)
@@ -335,16 +390,25 @@ with tab_rec:
         for cat, row in top_alta.iterrows():
             st.write(f"- **{cat}**: {row['recente']:.0f} incidentes recentes, variação de {row['variacao_%']:+.0f}% — investigar causa raiz esta semana.")
 
+    top_ola = ranking_ola.head(3)
+    resumo_top_ola = ", ".join(
+        f"{row.Categoria} ({int(row.violacoes)} violações; {row['taxa_violacao_%']:.1f}%)"
+        for _, row in top_ola.iterrows()
+    )
+
     st.markdown(f"""
 **Síntese estrutural:**
 1. **Reduzir ruído de monitoramento** — {metricas['pct_ruido_monitoramento']}% dos incidentes são abertos por
    monitoramento; {metricas['pct_sem_intervencao_monitoramento']}% destes fecham sem intervenção humana.
 2. **Antecipação de volume** — modelo D+1/D+7 supera a previsão ingênua em 9–12%, com previsão automática
    disponível na aba "Painel do Dia".
-3. **Atenção preventiva por categoria** — cat31, cat85 e cat71 concentram o maior volume de violações; cat48
-   tem taxa de violação de 7,8% (quase 8x a média) — possível causa raiz isolada.
-4. **Capacidade do Team14** — concentra 76% do volume total e é a variável mais associada ao risco de OLA.
+3. **Atenção preventiva por categoria** — maiores concentrações atuais: {resumo_top_ola}.
+4. **Capacidade do Team14** — o histórico analisado concentra 76% do volume nesse grupo; confirmar a
+   regra de atribuição e então validar staffing e automação de triagem.
 5. **Próximos passos** — ampliar o histórico do regime atual e incorporar dados externos (deploys, janelas
    de manutenção) como features adicionais.
 """)
-    st.caption("Painel construído com Streamlit · Random Forest (scikit-learn) · Challenge FIAP x Locaweb 2026")
+    st.caption(
+        "Painel construído com Streamlit · Random Forest para volume · regras auditáveis para OLA · "
+        "Challenge FIAP x Locaweb 2026"
+    )

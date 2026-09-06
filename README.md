@@ -1,7 +1,23 @@
-# AIOps Locaweb — Painel de Previsão de Incidentes
+# AIOps Locaweb — Painel Operacional de Incidentes
 
 Painel interativo (Streamlit) com previsão de volume de incidentes (D+1/D+7), risco de
 violação de OLA e recomendações operacionais. Desenvolvido para o Challenge FIAP x Locaweb 2026.
+
+Aplicação publicada: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
+
+## Decisões de modelagem
+
+- **Benchmark histórico da Sprint 3:** a Regressão Linear foi o modelo que melhor generalizou no
+  corte temporal amplo (D+1: MAE 187,58; RMSE 275,83; R² 0,394. D+7: MAE 181,22; RMSE 267,13;
+  R² 0,436).
+- **Modelo operacional do painel:** Random Forest retreinada no regime recente e avaliada nos
+  últimos 21 dias (D+1: MAE 197,8; MAPE 19,8%. D+7: MAE 168,6; MAPE 16,8%). A distinção evita
+  comparar resultados produzidos com janelas temporais diferentes como se fossem o mesmo teste.
+- **OLA:** regra determinística e auditável conforme o Dicionário de Dados v2: 4 horas para P1/P2,
+  12 horas para P3, 24 horas para P4 e 96 horas para P5. No recorte de KPI, entram prioridades
+  1–3, sem incidente pai e com intervenção. São 7.090 violações na base completa (5,79%) e 3.685
+  entre 25.751 incidentes elegíveis (14,31%). As flags originais permanecem no parquet apenas para
+  rastreabilidade.
 
 ## Rodar localmente
 
@@ -15,32 +31,26 @@ Abre em `http://localhost:8501`.
 ## Publicar de graça (Streamlit Community Cloud) — ~10 minutos
 
 1. Crie uma conta gratuita em **share.streamlit.io** (pode entrar direto com sua conta GitHub).
-2. Crie um repositório novo no **GitHub** (pode ser público) e suba TODO o conteúdo desta
-   pasta `app/` (app.py, requirements.txt, a pasta `dados/` e a pasta `modelos/`) — pelo site
-   do GitHub mesmo, arrastando os arquivos, sem precisar usar linha de comando se não quiser.
+2. Crie um repositório no **GitHub** e envie os arquivos listados na estrutura abaixo.
 3. No Streamlit Community Cloud, clique em **"New app"**, escolha o repositório que você
    acabou de criar, selecione o arquivo `app.py` como arquivo principal, e clique em **Deploy**.
-4. Em alguns minutos o app estará no ar com uma URL pública tipo
-   `https://seu-usuario-seu-projeto.streamlit.app` — esse é o link que vai no slide de
-   "Demonstração da Solução" e na planilha final.
+4. Após o deploy, use a URL pública no slide de demonstração e na planilha final.
 
 ## Estrutura
 
 ```
-app/
-├── app.py                 # aplicação Streamlit
+aiops-locaweb-dashboard/
+├── app.py                          # aplicação Streamlit
 ├── requirements.txt
-├── dados/
-│   ├── dataset_limpo.parquet     # base completa tratada (122.543 incidentes), para consulta ao vivo
-│   ├── serie_features.csv        # série diária agregada + features
-│   ├── teste_previsao_d1.csv
-│   ├── teste_previsao_d7.csv
-│   ├── ranking_categorias_risco.csv
-│   └── metricas.json
-└── modelos/                # modelos treinados (Random Forest, scikit-learn)
-    ├── rf_d1.joblib
-    ├── rf_d7.joblib
-    └── features_list.joblib
+├── dataset_limpo.parquet           # base tratada, com regras oficiais de OLA
+├── serie_features.csv              # série diária agregada + features
+├── teste_previsao_d1.csv
+├── teste_previsao_d7.csv
+├── ranking_categorias_risco.csv
+├── metricas.json
+├── rf_d1.joblib                    # Random Forest operacional D+1
+├── rf_d7.joblib                    # Random Forest operacional D+7
+└── features_list.joblib
 ```
 
 ## O que o painel mostra
@@ -54,5 +64,6 @@ app/
 - **📊 Tendências**: sazonalidade por dia da semana, volume por prioridade (P2/P3).
 - **🔮 Previsão & Simulador**: previsto vs. real no período de teste + simulador manual de cenários
   hipotéticos, rodando os modelos treinados ao vivo.
-- **⚠️ Risco de OLA**: ranking de categorias mais críticas + métricas do modelo de classificação.
+- **⚠️ Risco de OLA**: ranking de categorias mais críticas e indicadores recalculados pelas regras
+  oficiais de elegibilidade e duração.
 - **✅ Recomendações**: síntese acionável combinando achados fixos com alertas calculados na hora.

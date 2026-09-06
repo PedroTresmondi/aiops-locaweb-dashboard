@@ -9,5 +9,11 @@
   "n_incidentes_total": 122543,
   "n_incidentes_regime_atual": 121,
   "pct_ruido_monitoramento": 85.1,
-  "pct_sem_intervencao_monitoramento": 77.0
+  "pct_sem_intervencao_monitoramento": 77.0,
+  "n_elegiveis_kpi_regra": 25751,
+  "n_violacoes_ola_total_regra": 7090,
+  "n_violacoes_ola_kpi_regra": 3685,
+  "taxa_ola_total_regra_pct": 5.79,
+  "taxa_ola_kpi_regra_pct": 14.31,
+  "nota_modelo_volume": "Random Forest operacional retreinada no regime recente; benchmark historico amplo da Sprint 3 favoreceu Regressao Linear."
 }
