@@ -1,23 +1,62 @@
-# AIOps Locaweb — Painel Operacional de Incidentes
+# visionOps AI — Central de Operações
 
-Painel interativo (Streamlit) com previsão de volume de incidentes (D+1/D+7), risco de
-violação de OLA e recomendações operacionais. Desenvolvido para o Challenge FIAP x Locaweb 2026.
+Aplicação Streamlit do Challenge FIAP × Locaweb 2026. A solução transforma o histórico
+anonimizado de incidentes em previsão de volume, priorização de risco de OLA, diagnóstico
+de qualidade e plano de ação operacional.
 
-Aplicação publicada: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
+Aplicação pública: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
 
-## Decisões de modelagem
+## O que é calculado de verdade
 
-- **Benchmark histórico da Sprint 3:** a Regressão Linear foi o modelo que melhor generalizou no
-  corte temporal amplo (D+1: MAE 187,58; RMSE 275,83; R² 0,394. D+7: MAE 181,22; RMSE 267,13;
-  R² 0,436).
-- **Modelo operacional do painel:** Random Forest retreinada no regime recente e avaliada nos
-  últimos 21 dias (D+1: MAE 197,8; MAPE 19,8%. D+7: MAE 168,6; MAPE 16,8%). A distinção evita
-  comparar resultados produzidos com janelas temporais diferentes como se fossem o mesmo teste.
-- **OLA:** regra determinística e auditável conforme o Dicionário de Dados v2: 4 horas para P1/P2,
-  12 horas para P3, 24 horas para P4 e 96 horas para P5. No recorte de KPI, entram prioridades
-  1–3, sem incidente pai e com intervenção. São 7.090 violações na base completa (5,79%) e 3.685
-  entre 25.751 incidentes elegíveis (14,31%). As flags originais permanecem no parquet apenas para
-  rastreabilidade.
+- **122.543 incidentes** do snapshot entre 02/01/2023 e 31/12/2025.
+- **25.751 elegíveis ao KPI**, conforme prioridade 1–3, ausência de incidente pai e status
+  diferente de `Sem Intervenção`.
+- **3.685 violações dentro do universo elegível**, equivalentes a **14,31%**.
+- **7.090 violações na base completa**, equivalentes a **5,79%**. Esse número não é usado
+  como numerador da taxa sobre elegíveis.
+- Previsões recalculadas em execução pela Regressão Linear vencedora da Sprint 3, com
+  18 features temporais sem vazamento de alvo.
+
+O app identifica explicitamente cada elemento como observado, resultado do modelo, cenário
+ou recomendação. Não há geração de métricas sintéticas nem chamadas a IA generativa.
+
+## Validação temporal reproduzida
+
+| Horizonte | MAE | RMSE | R² | Viés médio (real − previsto) |
+|---|---:|---:|---:|---:|
+| D+1 | 187,58 | 275,83 | 0,394 | +165,71 |
+| Dia +7 | 181,22 | 267,13 | 0,436 | −88,05 |
+
+O teste usa os últimos 20% da série, de 27/05/2025 a 24/12/2025, sem embaralhamento.
+Random Forest, Gradient Boosting e Extra Trees são recalculados como benchmark; todos tiveram
+R² negativo nesse corte. O histórico contém uma quebra de regime forte em setembro de 2025,
+por isso o app também mostra o viés e faixas empíricas de 80%, não apenas o ponto previsto.
+
+Com o snapshot atual, o modelo final — reajustado depois da validação com todos os alvos já
+conhecidos — estima:
+
+- **D+1 (01/01/2026): 962**, faixa empírica de **914 a 1.424** incidentes;
+- **dia +7 (07/01/2026): 1.313**, faixa empírica de **929 a 1.398** incidentes.
+
+Essas datas são consequência do limite da base, não previsões ao vivo para a data atual.
+`Dia +7` significa o volume daquele dia, e não a soma dos próximos sete dias. O modelo não
+possui indicador de feriado, limitação relevante para a estimativa de 01/01.
+
+## Estrutura
+
+```text
+aiops-locaweb-dashboard/
+├── app.py                    # interface e análises operacionais
+├── model_pipeline.py         # features, validação, benchmark e treino final
+├── dataset_limpo.parquet     # base tratada e regras auditadas de OLA
+├── tests/
+│   └── test_pipeline.py      # testes dos resultados centrais
+├── requirements.txt
+└── README.md
+```
+
+Os antigos artefatos de Random Forest foram removidos da versão ativa para não misturar um
+experimento posterior de 21 dias com o modelo e a janela definidos na Sprint 3.
 
 ## Rodar localmente
 
@@ -26,44 +65,16 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Abre em `http://localhost:8501`.
+## Testar
 
-## Publicar de graça (Streamlit Community Cloud) — ~10 minutos
-
-1. Crie uma conta gratuita em **share.streamlit.io** (pode entrar direto com sua conta GitHub).
-2. Crie um repositório no **GitHub** e envie os arquivos listados na estrutura abaixo.
-3. No Streamlit Community Cloud, clique em **"New app"**, escolha o repositório que você
-   acabou de criar, selecione o arquivo `app.py` como arquivo principal, e clique em **Deploy**.
-4. Após o deploy, use a URL pública no slide de demonstração e na planilha final.
-
-## Estrutura
-
-```
-aiops-locaweb-dashboard/
-├── app.py                          # aplicação Streamlit
-├── requirements.txt
-├── dataset_limpo.parquet           # base tratada, com regras oficiais de OLA
-├── serie_features.csv              # série diária agregada + features
-├── teste_previsao_d1.csv
-├── teste_previsao_d7.csv
-├── ranking_categorias_risco.csv
-├── metricas.json
-├── rf_d1.joblib                    # Random Forest operacional D+1
-├── rf_d7.joblib                    # Random Forest operacional D+7
-└── features_list.joblib
+```bash
+python -m unittest discover -s tests -v
 ```
 
-## O que o painel mostra
+## Limites de uso
 
-- **🏠 Painel do Dia**: previsão automática real de D+1 e D+7 — calculada ao vivo aplicando os
-  modelos sobre o último dia efetivamente registrado na base (não é hipotética) — mais alertas
-  de categorias em alta (últimos 14 dias vs. 14 dias anteriores), calculados por consulta direta
-  à base de dados a cada carregamento.
-- **🔍 Explorar Dados**: consulta interativa à base completa (122 mil incidentes) com filtros por
-  período, prioridade, categoria e equipe — gráfico e tabela recalculados na hora.
-- **📊 Tendências**: sazonalidade por dia da semana, volume por prioridade (P2/P3).
-- **🔮 Previsão & Simulador**: previsto vs. real no período de teste + simulador manual de cenários
-  hipotéticos, rodando os modelos treinados ao vivo.
-- **⚠️ Risco de OLA**: ranking de categorias mais críticas e indicadores recalculados pelas regras
-  oficiais de elegibilidade e duração.
-- **✅ Recomendações**: síntese acionável combinando achados fixos com alertas calculados na hora.
+- O dataset é um snapshot e não possui ingestão contínua.
+- A previsão é de volume total; não prevê OLA, produto ou categoria individualmente.
+- Coeficientes descrevem associação no modelo e não provam causalidade.
+- Converter volume em headcount exige produtividade/tempo por analista, ausentes na fonte.
+- A cobertura histórica do cenário de priorização não equivale a violações que seriam evitadas.
