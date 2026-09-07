@@ -17,15 +17,15 @@ import type {
 type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'monitor' | 'models' | 'audit'
 
 const nav: { id: Page; label: string; icon: typeof Activity }[] = [
-  { id: 'overview', label: 'Visão operacional', icon: CircleGauge },
+  { id: 'overview', label: 'Central operacional', icon: CircleGauge },
   { id: 'queue', label: 'Fila operacional', icon: ListChecks },
   { id: 'triage', label: 'Triagem preditiva', icon: Sparkles },
   { id: 'diagnostics', label: 'Diagnóstico de OLA', icon: Target },
   { id: 'optimization', label: 'Alocação preventiva', icon: SlidersHorizontal },
   { id: 'capacity', label: 'Capacidade & ação', icon: Users },
-  { id: 'monitor', label: 'Monitor de dados', icon: Radar },
-  { id: 'models', label: 'Modelos & validação', icon: BrainCircuit },
-  { id: 'audit', label: 'Qualidade dos dados', icon: Database },
+  { id: 'monitor', label: 'Monitor de deriva', icon: Radar },
+  { id: 'models', label: 'Modelo & previsão', icon: BrainCircuit },
+  { id: 'audit', label: 'Auditoria de dados', icon: Database },
 ]
 
 const PERFIS: { id: Perfil; label: string }[] = [
@@ -85,7 +85,7 @@ function OverviewPage() {
   const d1 = data.forecast[0]
   const d7 = data.forecast[1]
   return <>
-    <PageTitle eyebrow="Command center" title="Visão operacional" copy={`Snapshot de ${date(data.snapshot.inicio)} a ${date(data.snapshot.fim)} · decisões com rastreabilidade`} actions={<button className="ghost-button"><Clock3 size={16}/> Atualizado no snapshot</button>}/>
+    <PageTitle eyebrow="Command center" title="Central operacional" copy={`Snapshot de ${date(data.snapshot.inicio)} a ${date(data.snapshot.fim)} · decisões com rastreabilidade`} actions={<button className="ghost-button"><Clock3 size={16}/> Atualizado no snapshot</button>}/>
     <div className="stats-grid">
       <StatCard icon={<Activity/>} label="Demanda prevista D+1" value={int.format(d1.ponto)} detail={`Faixa de 80%: ${int.format(d1.inferior)}–${int.format(d1.superior)}`} tone="orange"/>
       <StatCard icon={<TrendingUp/>} label="Demanda prevista D+7" value={int.format(d7.ponto)} detail={`Faixa de 80%: ${int.format(d7.inferior)}–${int.format(d7.superior)}`} tone="teal"/>
@@ -280,7 +280,7 @@ function ModelsPage() {
   if (error) return <ErrorState message={error}/>
   if (!data) return <Loading label="Carregando validação temporal"/>
   return <>
-    <PageTitle eyebrow="Model governance" title="Modelos & validação" copy="Desempenho fora da amostra, calibração e sinais usados na decisão."/>
+    <PageTitle eyebrow="Model governance" title="Modelo & previsão" copy="Desempenho fora da amostra, calibração e sinais usados na decisão."/>
     <div className="stats-grid">
       <StatCard icon={<BrainCircuit/>} label="ROC-AUC risco" value={dec.format(data.risk.rocAuc)} detail="Discriminação no holdout" tone="violet"/>
       <StatCard icon={<Target/>} label="PR-AUC risco" value={dec.format(data.risk.prAuc)} detail={`Base positiva: ${pct(data.risk.prevalencia)}`} tone="orange"/>
@@ -311,7 +311,7 @@ function AuditPage() {
   if (!data) return <Loading/>
   const columns = data.sample.length ? Object.keys(data.sample[0]) : []
   return <>
-    <PageTitle eyebrow="Data observability" title="Qualidade dos dados" copy="Transparência sobre completude, universo analítico e registros que sustentam as decisões."/>
+    <PageTitle eyebrow="Data observability" title="Auditoria de dados" copy="Transparência sobre completude, universo analítico e registros que sustentam as decisões."/>
     <div className="quality-grid">{data.missing.map(item => <article key={item.campo}><div><span>{item.campo}</span><strong>{pct(1-item.taxa)} completos</strong></div><div className="quality-track"><span style={{ width: `${(1-item.taxa)*100}%` }}/></div><small>{int.format(item.faltantes)} ausentes</small></article>)}</div>
     <Panel title="Amostra auditável" subtitle="50 registros mais recentes do snapshot — nenhuma linha sintética">
       <div className="data-table-wrap"><table><thead><tr>{columns.map(c => <th key={c}>{c}</th>)}</tr></thead><tbody>{data.sample.map((row, index) => <tr key={index}>{columns.map(c => <td key={c}>{typeof row[c] === 'boolean' ? (row[c] ? 'Sim' : 'Não') : String(row[c] ?? '—')}</td>)}</tr>)}</tbody></table></div>
@@ -516,7 +516,7 @@ function MonitorPage() {
   if (!status || !drift) return <Loading label="Comparando janelas de dados"/>
   const nivelClasse: Record<string, string> = { 'estável': 'positive', 'atenção': '', 'alto': 'negative' }
   return <>
-    <PageTitle eyebrow="Model governance" title="Monitor de dados" copy="Deriva entre a janela de treino e os dados recentes, e quando o modelo precisa ser revalidado."/>
+    <PageTitle eyebrow="Model governance" title="Monitor de deriva" copy="Deriva entre a janela de treino e os dados recentes, e quando o modelo precisa ser revalidado."/>
     <div className={`decision-panel panel ${status.revalidacaoRecomendada ? 'alerta' : ''}`}>
       <div className="decision-icon"><Radar/></div>
       <h3>{status.revalidacaoRecomendada ? 'Revalidação recomendada' : 'Modelo dentro do ciclo'}</h3>
