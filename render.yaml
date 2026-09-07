@@ -1,10 +1,13 @@
+# Render Blueprint — backend FastAPI (imagem Docker completa).
+# O frontend React vai para a Vercel apontando VITE_API_BASE_URL para este serviço.
+# Depois do 1º deploy: no painel do serviço, definir CORS_ORIGINS = URL da Vercel.
 services:
   - type: web
     name: visionops-ai
     runtime: docker
     plan: free
-    healthCheckPath: /api/health
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.10
-
+      - key: CORS_ORIGINS
+        sync: false

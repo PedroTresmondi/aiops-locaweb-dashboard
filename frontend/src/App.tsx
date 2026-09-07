@@ -8,7 +8,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api } from './api'
+import { api, apiUrl } from './api'
 import type {
   AdvancedModel, Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
   Perfil, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
@@ -433,7 +433,7 @@ function QueuePage({ perfil }: { perfil: Perfil }) {
             <label className="file-drop"><UploadCloud size={18}/><span>Selecionar arquivo .csv</span>
               <input type="file" accept=".csv,text/csv" onChange={e => { const f = e.target.files?.[0]; if (f) enviarCsv(f) }}/>
             </label>
-            <a className="ghost-button" href="/api/queue/template" download="modelo_fila.csv"><ArrowRight size={15}/> Baixar modelo</a>
+            <a className="ghost-button" href={apiUrl('/api/queue/template')} download="modelo_fila.csv"><ArrowRight size={15}/> Baixar modelo</a>
           </div>
         </Panel>}
 

@@ -67,7 +67,7 @@ ou recomendação. Não há geração de métricas sintéticas nem chamadas a IA
 
 A aplicação é a mesma da arquitetura Azure da Sprint 3: imagem no Azure Container Registry,
 execução no Azure Container Instance, banco Azure Database for MySQL (passwordless via Managed
-Identity) e telemetria no Application Insights / Log Analytics. Passos em `DEPLOY_AZURE.md`.
+Identity) e telemetria no Application Insights / Log Analytics. Passos em `DEPLOY.md`.
 
 - **Fonte de dados:** `VISIONOPS_DATASOURCE=parquet` (padrão, snapshot auditado) ou `mysql`
   (Azure). O resto do código não muda.
@@ -184,7 +184,7 @@ aiops-locaweb-dashboard/
 │   ├── test_sprint4.py       # fila em lote, ações, deriva, otimização, segmentação, legado
 │   └── test_advanced_model.py # feriados, Poisson, backtest rolling-origin
 ├── Dockerfile                # build único de frontend + backend (ACR/ACI)
-├── DEPLOY_AZURE.md           # runbook de publicação no Azure
+├── DEPLOY.md                 # runbook: Vercel+Render, Azure, local
 ├── render.yaml               # deploy alternativo como Web Service
 ├── requirements.txt
 └── README.md

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -31,9 +32,13 @@ app = FastAPI(
     version="1.0.0",
     description="API operacional para previsão de demanda e risco de violação de OLA.",
 )
+
+_ORIGENS_PADRAO = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_origens_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_ORIGENS_PADRAO + _origens_extra,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

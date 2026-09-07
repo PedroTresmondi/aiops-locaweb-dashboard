@@ -26,10 +26,14 @@ preventiva, deriva, segmentação) também rodam no app Streamlit — o `app.py`
 
 ### Onde está no ar
 
-| Interface | URL | Estado |
+| Interface | Hospedagem | Estado |
 |---|---|---|
-| Streamlit — 9 áreas operacionais | https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/ | sempre no ar (deploy automático a cada push em `main`) |
-| React + FastAPI (Azure Web App) | https://visionops-ai-fiap-esdshub2ceexe2er.eastus-01.azurewebsites.net/ | **parado** — religar antes da banca (`Stop`/`Start` no portal) |
+| React (produto principal) | Vercel | link ao vivo do dia a dia |
+| API FastAPI | Render (Docker, free) + ping a cada 10 min | idem |
+| React + FastAPI (arquitetura oficial) | Azure Container Instance | religar para a banca |
+| Streamlit — 9 áreas | Streamlit Community Cloud | backup sempre no ar |
+
+Passos de cada um em `DEPLOY.md`.
 
 ---
 
@@ -53,21 +57,20 @@ modelos de árvore puros (Random Forest, Gradient Boosting, Extra Trees) dão R�
 ## 3. Arquitetura (Azure — mesma da Sprint 3)
 
 ```
-dataset real ──► Azure Container Registry ──► Azure Web App (Container, FastAPI) ──► Azure Database for MySQL
- (LW-DATASET)     acraiopsvisionopsai          visionops-ai-fiap (Linux, B1)          mysql-aiops-visionopsai
+dataset real ──► Azure Container Registry ──► Azure Container Instance (FastAPI) ──► Azure Database for MySQL
+ (LW-DATASET)     acraiopsvisionopsai          aci-aiops-sla-monitor                  mysql-aiops-visionopsai
                                                       │                                (Chile Central, Entra-only)
                                        Managed Identity id-aiops-visionopsai (sem senha)
                                                       │
                                         Application Insights ──► Log Analytics Workspace
 ```
 
-- **Resource Group:** `rg-aiops-sprint3-visionopsai` (East US)
-- **Imagem:** `acraiopsvisionopsai.azurecr.io/visionops-ai:v1`, construída com
-  `az acr build --registry acraiopsvisionopsai --image visionops-ai:v1 <URL do repo GitHub>`
-  (commit da imagem: `26033c0`)
-- **Plano:** App Service B1 (1,75 GB / 1 vCPU) — ~US$ 12,41/mês no crédito Azure for Students
+- **Resource Group:** `rg-aiops-sprint3-visionopsai` (East US); MySQL em Chile Central
+- **Imagem:** `acraiopsvisionopsai.azurecr.io/aiops-sla-monitor`, construída no Cloud Shell
+  com `az acr build --registry acraiopsvisionopsai --build-arg INSTALL_AZURE=true .`
+- **Managed Identity** `id-aiops-visionopsai` (user-assigned): AcrPull + conexão ao MySQL, sem senha
 - **Fonte de dados:** `VISIONOPS_DATASOURCE=parquet` (padrão) ou `mysql` (passwordless)
-- Runbook completo em `DEPLOY_AZURE.md`.
+- O container serve o React e a API no mesmo processo. Runbook completo em `DEPLOY.md`.
 
 ---
 
@@ -186,5 +189,5 @@ Páginas que valem print (nomes do Streamlit):
 5. **Diagnóstico de OLA** — quadrantes + segmentação K-Means (cluster crítico: 3 produtos, taxa ~51%)
 6. **Modelo & previsão** — tabela do holdout + painel "Modelo avançado" (backtest rolling-origin)
 
-Para a demo ao vivo: o Streamlit basta. Se quiser mostrar o app React, religar o Azure Web App
-(`Start`) uns minutos antes para aquecer os modelos.
+Para a demo ao vivo: o app React na Vercel (backend no Render, mantido acordado por ping).
+Para a banca, subir a arquitetura oficial no Azure Container Instance — ver `DEPLOY.md`.
