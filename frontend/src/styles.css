@@ -194,6 +194,76 @@ tr:hover td { background: #f8fafd; }
 .error-state p { margin: 3px 0 0; font-size: 10px; }
 .scrim { display: none; }
 
+/* Tema noturno — padrão visual da aplicação */
+:root {
+  color-scheme: dark;
+  --ink: #f2f6fb;
+  --muted: #91a1b5;
+  --line: #223147;
+}
+body { color: #e9eff7; background: #07101c; }
+main { background: radial-gradient(circle at 88% 0%, rgba(31,76,129,.13), transparent 28%), #09131f; }
+.topbar { background: rgba(9,19,31,.9); border-bottom-color: #1c2a3d; }
+.breadcrumb { color: #aebdcd; }
+.breadcrumb svg { color: #71869d; }
+.search { color: #6f8298; background: #0e1a29; border-color: #223247; }
+.search kbd { color: #76889c; background: #132135; border-color: #2a3b51; }
+.ghost-button { color: #a7b7c9; background: #101d2c; border-color: #2a3a4f; }
+.page-title p { color: #91a1b5; }
+.stat-card, .panel, .quality-grid article, .scenario-grid article {
+  background: linear-gradient(145deg, #111e2e, #0d1927);
+  border-color: #223147;
+  box-shadow: 0 8px 26px rgba(0,0,0,.16);
+}
+.stat-head { color: #8496aa; }
+.stat-card > strong, .panel h2, .scenario-grid strong { color: #f4f8fc; }
+.stat-card > p, .panel-head p, .scenario-grid p { color: #71849a; }
+.stat-card.orange .stat-icon { color: #ff7651; background: rgba(239,98,54,.12); }
+.stat-card.teal .stat-icon { color: #42d2bf; background: rgba(15,159,145,.12); }
+.stat-card.red .stat-icon { color: #ff6d82; background: rgba(219,63,85,.12); }
+.stat-card.violet .stat-icon { color: #a993ff; background: rgba(124,92,229,.14); }
+.stat-card.navy .stat-icon { color: #72a8ff; background: rgba(37,99,235,.14); }
+.decision-panel { background: radial-gradient(circle at 88% 4%, rgba(48,110,180,.18), transparent 35%), linear-gradient(145deg,#112943,#081522); border-color: #21405f; }
+.form-grid label > span { color: #93a4b7; }
+.form-grid input, .form-grid select { color: #dfe8f2; background: #0b1725; border-color: #29394e; }
+.form-grid input:focus, .form-grid select:focus { border-color: #4d83ca; box-shadow: 0 0 0 3px rgba(63,127,217,.14); }
+.form-grid input::-webkit-calendar-picker-indicator { filter: invert(.75); }
+.primary-button { background: linear-gradient(100deg, #245cae, #337fe9); }
+.evidence { background: #0b1725; border-color: #243449; }
+.evidence span, .evidence small { color: #71849a; }
+.evidence strong { color: #edf5ff; }
+.segmented { background: #0d1927; border-color: #26364a; }
+.segmented button { color: #8395aa; }
+.segmented button.active { color: white; background: #285e9f; }
+.action-item { border-bottom-color: #223147; }
+.rank { color: #9eb6d0; background: #18283a; }
+.action-item strong { color: #e3ebf4; }
+.action-item small { color: #75879c; }
+.rate { color: #68d7c6; background: rgba(15,159,145,.12); }
+.rate.bad { color: #ff8a6a; background: rgba(239,98,54,.12); }
+.insight { color: #a7c5e4; background: rgba(36,89,151,.15); border-color: #254264; }
+.capacity-callout { color: #a3ded4; background: rgba(15,159,145,.1); border-color: #1e514e; }
+.method-note { color: #aec9e5; background: rgba(39,93,151,.13); border-color: #294766; }
+.model-table, .data-table-wrap { border-color: #26364a; }
+.table-row { color: #a9b8c9; border-top-color: #223147; }
+.table-row.table-head { color: #7f91a6; background: #0a1623; }
+.quality-grid article > div:first-child { color: #91a1b5; }
+.quality-grid article strong { color: #e5edf6; }
+.quality-track { background: #1c2a3c; }
+table { background: #0d1927; }
+th { color: #8294a9; background: #0a1623; }
+td { color: #aebdcc; border-top-color: #202f43; }
+tr:hover td { background: #132237; }
+.loading { color: #8395aa; }
+.loading strong { color: #c8d5e3; }
+.loader { border-color: #263b53; border-top-color: #5598f0; }
+.error-state { color: #ffaaa0; background: rgba(151,42,48,.14); border-color: #5a2e37; }
+.recharts-cartesian-grid line { stroke: #223147; }
+.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line { stroke: #33445a; }
+.recharts-cartesian-axis-tick-value { fill: #7f91a6; }
+.recharts-legend-item-text { color: #91a1b5 !important; }
+.recharts-default-tooltip { color: #dfe8f2 !important; background: #111e2e !important; border-color: #2b3d53 !important; border-radius: 8px; }
+
 @media (max-width: 1120px) {
   .stats-grid { grid-template-columns: repeat(2,1fr); }
   .quality-grid { grid-template-columns: repeat(2,1fr); }
@@ -224,4 +294,3 @@ tr:hover td { background: #f8fafd; }
   .page-actions { width: 100%; }
   .chart-xl { height: 360px; }
 }
-
