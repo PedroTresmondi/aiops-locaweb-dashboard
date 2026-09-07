@@ -20,13 +20,15 @@ Aplicação full-stack que transforma o histórico anonimizado de incidentes da 
 
 Frontend React + TypeScript · Backend FastAPI · pipelines em scikit-learn. A mesma API
 serve o contrato legado da Sprint 3 (`/health`, `/incidentes/total`, `/previsao`,
-`/previsao/historico`).
+`/previsao/historico`). As mesmas análises (previsão, triagem, fila em lote, alocação
+preventiva, deriva, segmentação) também rodam no app Streamlit — o `app.py` importa
+`backend.optimization`, `backend.monitoring` e `backend.segmentation` direto.
 
 ### Onde está no ar
 
 | Interface | URL | Estado |
 |---|---|---|
-| Streamlit (contingência) | https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/ | no ar (deploy automático a cada push) |
+| Streamlit — 9 áreas operacionais | https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/ | sempre no ar (deploy automático a cada push em `main`) |
 | React + FastAPI (Azure Web App) | https://visionops-ai-fiap-esdshub2ceexe2er.eastus-01.azurewebsites.net/ | **parado** — religar antes da banca (`Stop`/`Start` no portal) |
 
 ---
@@ -135,9 +137,9 @@ modelo de risco validado e ordena por probabilidade. Cada chamado abre a contrib
 cada fator (delta do próprio modelo + taxa histórica). Ações (atribuído/escalado/resolvido/
 dispensado) persistem em SQLite.
 
-Exemplo — **18/11/2025** (janela de validação): 61 chamados · 8 em risco alto · 6,2 violações
-esperadas (soma das probabilidades) · **63,4% do risco no top 20% da fila** · das 5 violações
-reais do dia, 3 caem nos primeiros 20%.
+Exemplo — **18/11/2025**: 61 chamados · 14 em risco alto · 8,4 violações esperadas (soma das
+probabilidades) · **56,1% do risco esperado nos 20% do topo da fila** (13 chamados) · conferência
+com o real: das 5 violações de OLA do dia, **4 caem nesses primeiros 20%**.
 
 ### Alocação preventiva — MILP (Seção 18 do notebook de ML)
 Programação linear inteira via `scipy.optimize.milp`. Com capacidade de 5 produtos/dia:
@@ -171,15 +173,18 @@ Conclusão do monitor: **revalidação/retreino recomendado**.
 
 ## 7. Como capturar prints para o PPTX
 
-App local: `uvicorn backend.main:app --port 8000` (a partir da raiz do repo, com o
-`frontend/dist` já buildado) → `http://localhost:8000`. Primeira carga ~60–90 s (treina os
-modelos). Páginas que valem print:
+Mais simples: usar o Streamlit público (sempre no ar) — <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>.
+Alternativa local do app React: `uvicorn backend.main:app --port 8000` (raiz do repo, com
+`frontend/dist` buildado) → `http://localhost:8000`, primeira carga ~60–90 s.
 
-1. **Visão operacional** — cards 914 / 970 / 14,31% / 39,2% + "Pulso da operação"
-2. **Fila operacional** — data 18/11/2025, tabela ordenada por risco + linha de conferência
+Páginas que valem print (nomes do Streamlit):
+
+1. **Central operacional** — cards 914 / 970 / 14,31% + "Próximas decisões"
+2. **Fila operacional** — dia 18/11/2025: 61 chamados, 14 em risco alto, 56% do risco esperado nos 20% do topo; conferência: 4 das 5 violações reais do dia caíram nesses 20% (13 chamados)
 3. **Alocação preventiva** — cobertura 66% + curva de sensibilidade
-4. **Monitor de dados** — alerta de revalidação + tabela de PSI
-5. **Modelos & validação** — tabela do holdout + painel "Modelo avançado" (backtest rolling-origin)
+4. **Monitor de deriva** — alerta de revalidação + PSI de volume 7,67
+5. **Diagnóstico de OLA** — quadrantes + segmentação K-Means (cluster crítico: 3 produtos, taxa ~51%)
+6. **Modelo & previsão** — tabela do holdout + painel "Modelo avançado" (backtest rolling-origin)
 
-Para a demo ao vivo: religar o Azure Web App (`Start`) uns minutos antes e abrir a URL para
-aquecer os modelos.
+Para a demo ao vivo: o Streamlit basta. Se quiser mostrar o app React, religar o Azure Web App
+(`Start`) uns minutos antes para aquecer os modelos.
