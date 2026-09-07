@@ -1,0 +1,13 @@
+# Dependências extras usadas SÓ quando o app roda no Azure Container Instance.
+# Fora do Azure elas não são necessárias — o código funciona sem elas (fonte de
+# dados = snapshot Parquet, sem telemetria).
+#
+#   pip install -r backend/requirements.txt -r backend/requirements-azure.txt
+
+-r requirements.txt
+
+PyMySQL==1.1.1
+cryptography>=42,<44
+azure-identity==1.19.0
+azure-monitor-opentelemetry==1.6.4
+opentelemetry-instrumentation-fastapi==0.49b2

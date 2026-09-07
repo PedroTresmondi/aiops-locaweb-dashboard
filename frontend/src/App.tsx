@@ -1,26 +1,49 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   Activity, AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CheckCircle2,
-  ChevronRight, CircleGauge, Clock3, Database, Menu, Search, ShieldCheck,
-  Sparkles, Target, TrendingUp, Users, X,
+  ChevronRight, CircleGauge, Clock3, Database, ListChecks, Menu, Radar, Search,
+  ShieldCheck, SlidersHorizontal, Sparkles, Target, TrendingUp, UploadCloud, Users, X,
 } from 'lucide-react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { api } from './api'
-import type { Capacity, Diagnostic, Models, Overview, TriageResult } from './types'
+import type {
+  Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
+  Perfil, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
+} from './types'
 
-type Page = 'overview' | 'triage' | 'diagnostics' | 'capacity' | 'models' | 'audit'
+type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'monitor' | 'models' | 'audit'
 
 const nav: { id: Page; label: string; icon: typeof Activity }[] = [
   { id: 'overview', label: 'Visão operacional', icon: CircleGauge },
+  { id: 'queue', label: 'Fila operacional', icon: ListChecks },
   { id: 'triage', label: 'Triagem preditiva', icon: Sparkles },
   { id: 'diagnostics', label: 'Diagnóstico de OLA', icon: Target },
+  { id: 'optimization', label: 'Alocação preventiva', icon: SlidersHorizontal },
   { id: 'capacity', label: 'Capacidade & ação', icon: Users },
+  { id: 'monitor', label: 'Monitor de dados', icon: Radar },
   { id: 'models', label: 'Modelos & validação', icon: BrainCircuit },
   { id: 'audit', label: 'Qualidade dos dados', icon: Database },
 ]
+
+const PERFIS: { id: Perfil; label: string }[] = [
+  { id: 'analista', label: 'Analista' },
+  { id: 'gestor', label: 'Gestor' },
+  { id: 'administrador', label: 'Administrador' },
+]
+
+function usePerfil(): [Perfil, (p: Perfil) => void] {
+  const [perfil, setPerfil] = useState<Perfil>(() => {
+    try { return (localStorage.getItem('visionops.perfil') as Perfil) || 'analista' } catch { return 'analista' }
+  })
+  const trocar = (p: Perfil) => {
+    setPerfil(p)
+    try { localStorage.setItem('visionops.perfil', p) } catch { /* ambiente sem storage */ }
+  }
+  return [perfil, trocar]
+}
 
 const int = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 })
 const dec = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
@@ -142,6 +165,24 @@ function TriagePage() {
   </>
 }
 
+function SegmentacaoPanel({ dimension }: { dimension: string }) {
+  const [data, setData] = useState<Segmentation>()
+  const [error, setError] = useState('')
+  useEffect(() => { setData(undefined); api<Segmentation>(`/api/segmentation?dimension=${encodeURIComponent(dimension)}`).then(setData).catch(e => setError(e.message)) }, [dimension])
+  if (error) return <ErrorState message={error}/>
+  if (!data) return <Panel title="Segmentação de criticidade (K-Means)" subtitle="Carregando"><Loading/></Panel>
+  return <Panel title="Segmentação de criticidade (K-Means)" subtitle={`Seção 17 do notebook de ML · K=${data.kEscolhido} escolhido por ${data.criterio}`}>
+    <div className="model-table">
+      <div className="table-row table-head"><span>Cluster</span><span>Entidades</span><span>Incidentes</span><span>OLA violados</span><span>Taxa média</span></div>
+      {data.clusters.map(c => <div className="table-row" key={c.posicao}>
+        <strong>{c.rotulo}</strong><span>{int.format(c.entidades)}</span><span>{int.format(c.incidentesTotal)}</span>
+        <span>{int.format(c.olaViolados)}</span><span className={c.posicao === 0 ? 'negative' : ''}>{pct(c.taxaMedia)}</span>
+      </div>)}
+    </div>
+    <div className="insight"><Sparkles size={18}/><p><strong>Leitura:</strong> o cluster mais crítico costuma ter volume menor mas taxa de violação bem mais alta — a ordenação simples por soma não separa isso. Método recalculado sobre o snapshot atual.</p></div>
+  </Panel>
+}
+
 function DiagnosticsPage() {
   const [dimension, setDimension] = useState('Categoria')
   const [data, setData] = useState<Diagnostic>()
@@ -160,6 +201,7 @@ function DiagnosticsPage() {
         <div className="insight"><Sparkles size={18}/><p><strong>Prioridade sugerida:</strong> atuar primeiro nos itens com maior número absoluto; use a taxa para diferenciar concentração de volume de risco estrutural.</p></div>
       </Panel>
     </div>}
+    <SegmentacaoPanel dimension={dimension}/>
   </>
 }
 
@@ -238,22 +280,261 @@ function AuditPage() {
   </>
 }
 
+const FAIXA_CLASSE: Record<string, string> = { Alto: 'alto', Moderado: 'moderado', Baixo: 'baixo' }
+const parseCsv = (texto: string): Record<string, string>[] => {
+  const linhas = texto.trim().split(/\r?\n/).filter(Boolean)
+  if (linhas.length < 2) return []
+  const cabecalho = linhas[0].split(',').map(c => c.trim())
+  return linhas.slice(1).map(linha => {
+    const celulas = linha.split(',')
+    return Object.fromEntries(cabecalho.map((coluna, i) => [coluna, (celulas[i] ?? '').trim()]))
+  })
+}
+
+function FilaRow({ item, perfil, loteId, onAction }: { item: ItemFila; perfil: Perfil; loteId?: string | null; onAction: (t: string) => void }) {
+  const [aberto, setAberto] = useState(false)
+  const [registrada, setRegistrada] = useState<string>()
+  const podeAgir = perfil !== 'gestor'
+  async function registrar(acao: string) {
+    try {
+      await api('/api/actions', { method: 'POST', body: JSON.stringify({ ticketRef: item.id, acao, loteId, prioridade: item.prioridade, faixa: item.faixa, probabilidade: item.probabilidade, perfil }) })
+      setRegistrada(acao); onAction(acao)
+    } catch { setRegistrada('erro') }
+  }
+  return <>
+    <tr className={`fila-row ${aberto ? 'open' : ''}`} onClick={() => setAberto(v => !v)}>
+      <td><span className={`risk-pill ${FAIXA_CLASSE[item.faixa]}`}>{pct(item.probabilidade)}</span></td>
+      <td>{item.faixa}</td>
+      <td className="mono">{item.id}</td>
+      <td>P{item.prioridade}</td>
+      <td>{item.produto}</td>
+      <td>{item.categoria}</td>
+      <td>{item.grupo}</td>
+      <td>{item.violouReal === undefined ? '—' : item.violouReal ? <span className="rate bad">violou</span> : 'ok'}</td>
+      <td>{registrada && registrada !== 'erro' ? <span className="rate">{registrada}</span> : <ChevronRight className={aberto ? 'chevron open' : 'chevron'}/>}</td>
+    </tr>
+    {aberto && <tr className="fila-detalhe"><td colSpan={9}>
+      <div className="fatores">
+        {item.fatores.map(f => <div key={f.fator} className="fator">
+          <span>{f.fator}: <b>{f.valor}</b></span>
+          <span className={f.contribuicao >= 0 ? 'delta up' : 'delta down'}>{f.contribuicao >= 0 ? '+' : ''}{(f.contribuicao * 100).toFixed(1)} pp no risco</span>
+          <small>{f.taxaHistorica == null ? 'sem amostra histórica' : `taxa histórica ${pct(f.taxaHistorica)} · ${int.format(f.amostra)} casos`}</small>
+        </div>)}
+      </div>
+      {podeAgir && <div className="fila-acoes">
+        {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <button key={a} onClick={e => { e.stopPropagation(); registrar(a) }}>{a}</button>)}
+      </div>}
+      {!podeAgir && <p className="fila-nota">Perfil Gestor: visão de acompanhamento, sem registro de ação.</p>}
+    </td></tr>}
+  </>
+}
+
+function QueuePage({ perfil }: { perfil: Perfil }) {
+  const [modo, setModo] = useState<'snapshot' | 'csv'>('snapshot')
+  const [data, setData] = useState('2025-12-31')
+  const [dias, setDias] = useState(1)
+  const [resposta, setResposta] = useState<RespostaFila>()
+  const [resumoAcoes, setResumoAcoes] = useState<ResumoAcoes>()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const recarregarAcoes = () => { api<ResumoAcoes>('/api/actions/summary').then(setResumoAcoes).catch(() => {}) }
+  useEffect(recarregarAcoes, [])
+
+  async function carregarSnapshot() {
+    setLoading(true); setError('')
+    try { setResposta(await api<RespostaFila>(`/api/queue/sample?data=${data}&dias=${dias}`)) }
+    catch (e) { setError((e as Error).message); setResposta(undefined) } finally { setLoading(false) }
+  }
+  useEffect(() => { if (modo === 'snapshot') carregarSnapshot() }, [modo])
+
+  async function enviarCsv(file: File) {
+    setLoading(true); setError('')
+    try {
+      const linhas = parseCsv(await file.text())
+      if (!linhas.length) throw new Error('CSV vazio ou sem linhas de dados.')
+      const itens = linhas.map(l => ({
+        id: l.id || l.numero || l.Numero, prioridade: Number(l.prioridade || l.Prioridade || 3),
+        produto: l.produto || l.Produto || 'Não informado', categoria: l.categoria || l.Categoria || 'Não informado',
+        grupo: l.grupo || l.Grupo || 'Não informado', dataHora: l.dataHora || l.data_hora || l.aberto || null,
+      }))
+      setResposta(await api<RespostaFila>('/api/queue/score', { method: 'POST', body: JSON.stringify({ itens, referencia: file.name, persistir: true }) }))
+    } catch (e) { setError((e as Error).message); setResposta(undefined) } finally { setLoading(false) }
+  }
+
+  function exportar() {
+    if (!resposta) return
+    const linhas = [['id', 'faixa', 'probabilidade', 'prioridade', 'produto', 'categoria', 'grupo', 'aberto'].join(',')]
+    resposta.fila.forEach(i => linhas.push([i.id, i.faixa, i.probabilidade, i.prioridade, i.produto, i.categoria, i.grupo, i.aberto].join(',')))
+    const url = URL.createObjectURL(new Blob([linhas.join('\n')], { type: 'text/csv' }))
+    const a = document.createElement('a'); a.href = url; a.download = 'fila_priorizada.csv'; a.click(); URL.revokeObjectURL(url)
+  }
+
+  const r = resposta?.resumo
+  return <>
+    <PageTitle eyebrow="Batch operations" title="Fila operacional" copy="Pontue um lote de chamados, ordene por risco de violação e registre as ações da operação." actions={
+      resposta && <button className="ghost-button" onClick={exportar}><ArrowRight size={15}/> Exportar fila (.csv)</button>
+    }/>
+    <div className="segmented queue-modes">
+      <button className={modo === 'snapshot' ? 'active' : ''} onClick={() => setModo('snapshot')}>Do snapshot</button>
+      <button className={modo === 'csv' ? 'active' : ''} onClick={() => setModo('csv')}>Importar CSV</button>
+    </div>
+
+    {modo === 'snapshot'
+      ? <Panel title="Chamados de um dia real da base" subtitle="Incidentes elegíveis abertos na janela escolhida, pontuados com o modelo de risco validado">
+          <div className="queue-controls">
+            <label><span>Data</span><input type="date" value={data} min="2023-01-02" max="2025-12-31" onChange={e => setData(e.target.value)}/></label>
+            <label><span>Janela (dias)</span><input type="number" min={1} max={14} value={dias} onChange={e => setDias(Math.max(1, Math.min(14, +e.target.value)))}/></label>
+            <button className="primary-button" onClick={carregarSnapshot} disabled={loading}>{loading ? 'Pontuando…' : 'Carregar fila'}</button>
+          </div>
+          {resposta?.janelaModelo && <p className="fila-nota">Janela do modelo: {resposta.janelaModelo}. O campo “violou” é o resultado real do incidente — não estava disponível na abertura, serve só para conferir a ordenação.</p>}
+        </Panel>
+      : <Panel title="Importar CSV de chamados" subtitle="Colunas: id, prioridade, produto, categoria, grupo, dataHora">
+          <div className="queue-controls">
+            <label className="file-drop"><UploadCloud size={18}/><span>Selecionar arquivo .csv</span>
+              <input type="file" accept=".csv,text/csv" onChange={e => { const f = e.target.files?.[0]; if (f) enviarCsv(f) }}/>
+            </label>
+            <a className="ghost-button" href="/api/queue/template" download="modelo_fila.csv"><ArrowRight size={15}/> Baixar modelo</a>
+          </div>
+        </Panel>}
+
+    {error && <ErrorState message={error}/>}
+    {loading && !resposta && <Loading label="Pontuando o lote"/>}
+
+    {r && <>
+      <div className="stats-grid">
+        <StatCard icon={<ListChecks/>} label="Chamados na fila" value={int.format(r.total)} detail={`${int.format(r.filaAlta)} em risco alto · ${int.format(r.filaModerada)} moderado`} tone="navy"/>
+        <StatCard icon={<AlertTriangle/>} label="Violações esperadas" value={dec.format(r.violacoesEsperadas)} detail="Soma das probabilidades calibradas do lote" tone="red"/>
+        <StatCard icon={<Target/>} label="Captura no topo 20%" value={pct(r.capturaTop20Pct)} detail="Do risco total, quanto está nos primeiros 20% da fila" tone="teal"/>
+        <StatCard icon={<CheckCircle2/>} label="Risco priorizado" value={resumoAcoes ? dec.format(resumoAcoes.riscoPriorizado) : '—'} detail={resumoAcoes ? `${int.format(resumoAcoes.ticketsComAcao)} chamados com ação registrada` : 'Sem ações ainda'} tone="violet"/>
+      </div>
+      {r.violacoesReais !== undefined && <div className="insight"><Sparkles size={18}/><p><strong>Conferência:</strong> neste dia real houve {int.format(r.violacoesReais)} violação(ões) de OLA; {int.format(r.violacoesReaisNoTop20 ?? 0)} está(ão) nos primeiros 20% da fila ordenada pelo modelo.</p></div>}
+
+      <Panel title="Fila priorizada" subtitle="Clique numa linha para ver a contribuição de cada fator e registrar ação">
+        <div className="data-table-wrap">
+          <table className="fila-table">
+            <thead><tr><th>Risco</th><th>Faixa</th><th>Chamado</th><th>Pri.</th><th>Produto</th><th>Categoria</th><th>Grupo</th><th>Resultado</th><th></th></tr></thead>
+            <tbody>{resposta!.fila.map(item => <FilaRow key={item.id} item={item} perfil={perfil} loteId={resposta!.loteId} onAction={recarregarAcoes}/>)}</tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {resumoAcoes && <Panel title="Registro de ações" subtitle="Estado operacional persistido — não é contagem de violações evitadas, e sim de risco endereçado">
+        <div className="scenario-grid">
+          {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <article key={a}><span>{a}</span><strong>{int.format(resumoAcoes.porAcao[a] ?? 0)}</strong><p>chamados</p></article>)}
+        </div>
+      </Panel>}
+    </>}
+  </>
+}
+
+function OptimizationPage() {
+  const [capacidade, setCapacidade] = useState(5)
+  const [limite, setLimite] = useState(2)
+  const [data, setData] = useState<Optimization>()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  async function calcular() {
+    setLoading(true); setError('')
+    try { setData(await api<Optimization>(`/api/optimization?capacidade=${capacidade}&limitePorCategoria=${limite}`)) }
+    catch (e) { setError((e as Error).message) } finally { setLoading(false) }
+  }
+  useEffect(() => { calcular() }, [])
+  return <>
+    <PageTitle eyebrow="Prescriptive optimization" title="Alocação preventiva D+1" copy="Programação linear inteira (Seção 18 do notebook de ML): quais produtos revisar amanhã para cobrir o máximo de risco de OLA."/>
+    <div className="content-grid form-layout">
+      <Panel title="Parâmetros do modelo" subtitle="Capacidade e limite por categoria — calibráveis com a operação real">
+        <form className="form-grid" onSubmit={e => { e.preventDefault(); calcular() }}>
+          <label><span>Capacidade (produtos/dia)</span><input type="number" min={1} max={60} value={capacidade} onChange={e => setCapacidade(+e.target.value)}/></label>
+          <label><span>Máx. por categoria dominante</span><input type="number" min={1} max={12} value={limite} onChange={e => setLimite(+e.target.value)}/></label>
+          <button className="primary-button span-2" disabled={loading}><SlidersHorizontal size={16}/> {loading ? 'Otimizando…' : 'Recalcular alocação'}</button>
+        </form>
+        {error && <ErrorState message={error}/>}
+        {data && <div className="method-note"><ShieldCheck/><p>Objetivo: previsão real de volume D+1 ({dec.format(data.previsaoD1Total)}) distribuída pelos produtos conforme a participação histórica nas violações. Preço-sombra: <strong>{dec.format(data.precoSombra)}</strong> violações por vaga extra.</p></div>}
+      </Panel>
+      <Panel title="Cobertura de risco" subtitle={data ? `${pct(data.coberturaPct / 100)} do risco estimado coberto por ${data.selecionados.length} produto(s)` : 'Calculando'}>
+        {!data ? <Loading/> : <>
+          <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.sensibilidade} margin={{ left: -12, right: 10, top: 15 }}>
+            <CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="capacidade" axisLine={false} tickLine={false}/><YAxis tickFormatter={v => `${Math.round(v)}%`} axisLine={false} tickLine={false}/><Tooltip formatter={(v, n) => n === 'pctDoTotal' ? [`${v}%`, 'Cobertura'] : [dec.format(Number(v)), 'Risco coberto']}/>
+            <Bar dataKey="pctDoTotal" name="pctDoTotal" radius={[6, 6, 0, 0]}>{data.sensibilidade.map(s => <Cell key={s.capacidade} fill={s.capacidade === data.capacidade ? '#ef6236' : '#274c77'}/>)}</Bar>
+          </BarChart></ResponsiveContainer></div>
+          <div className="action-list">{data.selecionados.map((s, i) => <div className="action-item" key={s.produto}><span className="rank">{i + 1}</span><div><strong>{s.produto}</strong><small>categoria {s.categoriaDominante}</small></div><div className="rate">{dec.format(s.cargaEstimadaD1)}</div></div>)}</div>
+        </>}
+      </Panel>
+    </div>
+  </>
+}
+
+function MonitorPage() {
+  const [status, setStatus] = useState<ModelStatus>()
+  const [drift, setDrift] = useState<Drift>()
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api<ModelStatus>('/api/model-status').then(setStatus).catch(e => setError(e.message))
+    api<Drift>('/api/drift').then(setDrift).catch(e => setError(e.message))
+  }, [])
+  if (error) return <ErrorState message={error}/>
+  if (!status || !drift) return <Loading label="Comparando janelas de dados"/>
+  const nivelClasse: Record<string, string> = { 'estável': 'positive', 'atenção': '', 'alto': 'negative' }
+  return <>
+    <PageTitle eyebrow="Model governance" title="Monitor de dados" copy="Deriva entre a janela de treino e os dados recentes, e quando o modelo precisa ser revalidado."/>
+    <div className={`decision-panel panel ${status.revalidacaoRecomendada ? 'alerta' : ''}`}>
+      <div className="decision-icon"><Radar/></div>
+      <h3>{status.revalidacaoRecomendada ? 'Revalidação recomendada' : 'Modelo dentro do ciclo'}</h3>
+      <p>Snapshot de <strong>{status.snapshot}</strong> · {int.format(status.diasDesdeSnapshot)} dias atrás · ciclo alvo de {status.cicloRetreinoDias} dias · origem dos dados: {status.origemDados}.</p>
+      {status.motivos.map(m => <div className="decision-rule" key={m}><span>{m}</span></div>)}
+    </div>
+    <div className="stats-grid">
+      <StatCard icon={<BrainCircuit/>} label="ROC-AUC risco (holdout)" value={dec.format(status.risco.rocAuc)} detail={status.risco.holdout} tone="violet"/>
+      <StatCard icon={<TrendingUp/>} label="MAE volume D+1" value={dec.format(status.volume.maeD1)} detail={`D+7: ${dec.format(status.volume.maeD7)} · ${status.volume.holdout}`} tone="orange"/>
+      <StatCard icon={<Radar/>} label="Pior PSI" value={dec.format(drift.piorPsi)} detail="≥ 0,20 indica mudança relevante" tone="red"/>
+      <StatCard icon={<Activity/>} label="Volume recente / treino" value={`${dec.format(drift.volumeMedioDia.razao)}×`} detail={`${dec.format(drift.volumeMedioDia.referencia)} → ${dec.format(drift.volumeMedioDia.recente)} elegíveis/dia`} tone="teal"/>
+    </div>
+    <Panel title="Deriva por variável (PSI)" subtitle={`Referência: ${drift.janelaReferencia.inicio} a ${drift.janelaReferencia.fim} · recente: ${drift.janelaRecente.inicio} a ${drift.janelaRecente.fim}`}>
+      <div className="model-table">
+        <div className="table-row table-head"><span>Variável</span><span>PSI</span><span>Nível</span><span>Faixa mais deslocada</span><span></span></div>
+        {drift.features.map(f => <div className="table-row" key={f.feature}>
+          <strong>{f.feature}</strong><span>{dec.format(f.psi)}</span>
+          <span className={nivelClasse[f.nivel]}>{f.nivel}</span>
+          <span>{f.detalhe[0] ? `${f.detalhe[0].faixa} (${pct(f.detalhe[0].esperado)} → ${pct(f.detalhe[0].atual)})` : '—'}</span><span></span>
+        </div>)}
+      </div>
+      <div className="method-note"><ShieldCheck/><p>PSI (Population Stability Index) calculado sobre o snapshot real. A quebra de regime de volume em setembro/2025 aparece aqui como PSI alto em “Volume diário” — é a mesma limitação já documentada na Sprint 3, agora quantificada.</p></div>
+    </Panel>
+  </>
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>('overview')
   const [sidebar, setSidebar] = useState(false)
+  const [perfil, setPerfil] = usePerfil()
   const current = useMemo(() => nav.find(item => item.id === page)!, [page])
-  const PageComponent = { overview: OverviewPage, triage: TriagePage, diagnostics: DiagnosticsPage, capacity: CapacityPage, models: ModelsPage, audit: AuditPage }[page]
+
+  const workspace = page === 'queue' ? <QueuePage perfil={perfil}/>
+    : page === 'overview' ? <OverviewPage/>
+    : page === 'triage' ? <TriagePage/>
+    : page === 'diagnostics' ? <DiagnosticsPage/>
+    : page === 'optimization' ? <OptimizationPage/>
+    : page === 'capacity' ? <CapacityPage/>
+    : page === 'monitor' ? <MonitorPage/>
+    : page === 'models' ? <ModelsPage/>
+    : <AuditPage/>
+
   return <div className="app-shell">
     <aside className={sidebar ? 'sidebar open' : 'sidebar'}>
       <div className="brand"><div className="brand-mark"><Activity/></div><div><strong>visionOps <b>AI</b></strong><span>OPERATIONS INTELLIGENCE</span></div><button className="close-menu" onClick={() => setSidebar(false)}><X/></button></div>
       <nav>{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => { setPage(item.id); setSidebar(false) }}><Icon/><span>{item.label}</span>{page === item.id && <ChevronRight className="chevron"/>}</button> })}</nav>
+      <label className="perfil-picker"><span>Perfil operacional</span>
+        <select value={perfil} onChange={e => setPerfil(e.target.value as Perfil)}>{PERFIS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
+        <small>Visão de trabalho — não é autenticação</small>
+      </label>
       <div className="sidebar-status"><div className="status-dot"/><div><strong>Modelos ativos</strong><span>Snapshot auditável</span></div></div>
       <div className="sidebar-foot"><ShieldCheck/><span>Validação temporal<br/>Dezembro de 2025</span></div>
     </aside>
     <main>
-      <header className="topbar"><button className="menu-button" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><div className="search"><Search/><span>Buscar análise</span><kbd>⌘ K</kbd></div><div className="avatar">VT</div></div></header>
-      <div className="workspace"><PageComponent/></div>
+      <header className="topbar"><button className="menu-button" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><div className="search"><Search/><span>Buscar análise</span><kbd>⌘ K</kbd></div><div className="avatar">{perfil.slice(0, 2).toUpperCase()}</div></div></header>
+      <div className="workspace">{workspace}</div>
     </main>
-    {sidebar && <div className="scrim" onClick={() => setSidebar(false)}/>} 
+    {sidebar && <div className="scrim" onClick={() => setSidebar(false)}/>}
   </div>
 }

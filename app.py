@@ -340,6 +340,7 @@ with st.sidebar:
         "Navegação",
         [
             "Central operacional",
+            "Fila operacional",
             "Triagem preditiva",
             "Diagnóstico de OLA",
             "Capacidade & ação",
@@ -430,6 +431,121 @@ if pagina == "Central operacional":
             f"{fmt_pct(metricas_risco['captura_violacoes'], 1)} das violações capturadas",
             f"A fila alta revisa {fmt_pct(metricas_risco['taxa_revisada'], 1)} dos incidentes e concentra risco {fmt_num(metricas_risco['lift_fila_alta'], 1)}× acima da média.",
             "red",
+        )
+
+
+elif pagina == "Fila operacional":
+    cabecalho(
+        "Fila operacional em lote",
+        "Pontue um lote de chamados, ordene por risco de violação de OLA e exporte a fila priorizada.",
+        "Priorização em lote",
+    )
+    st.markdown(
+        """<div class="context-strip">
+        <span class="pill pill-model">PREDIÇÃO REAL · ensemble calibrado</span>
+        <span class="pill">SEM VAZAMENTO · só dados da abertura</span>
+        <span class="pill pill-alert">LOTE · não é um feed ao vivo</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    modo = st.radio("Origem", ["Dia real do snapshot", "Importar CSV"], horizontal=True, label_visibility="collapsed")
+    entradas = None
+    resultado_real = None
+    if modo == "Dia real do snapshot":
+        colf1, colf2 = st.columns([1, 1])
+        with colf1:
+            data_lote = st.date_input(
+                "Data de abertura", value=pd.Timestamp("2025-11-18").date(),
+                min_value=df["Aberto"].min().date(), max_value=snapshot.normalize().date(),
+            )
+        with colf2:
+            janela_dias = st.slider("Janela (dias)", 1, 14, 1)
+        inicio = pd.Timestamp(data_lote)
+        recorte = elegiveis[(elegiveis["Aberto"] >= inicio) & (elegiveis["Aberto"] < inicio + timedelta(days=janela_dias))]
+        if recorte.empty:
+            st.warning("Nenhum incidente elegível nessa janela do snapshot.")
+        else:
+            entradas = pd.DataFrame(
+                {
+                    "id": recorte["Número"].astype(str).to_numpy(),
+                    "prioridade": recorte["Prioridade_Cod"].to_numpy(),
+                    "produto": recorte["Produto"].fillna("Não informado").to_numpy(),
+                    "categoria": recorte["Categoria"].fillna("Não informado").to_numpy(),
+                    "grupo": recorte["Grupo designado"].fillna("Não informado").to_numpy(),
+                    "data_hora": recorte["Aberto"].to_numpy(),
+                }
+            )
+            resultado_real = dict(zip(recorte["Número"].astype(str), recorte["OLA_Violado_KPI_Regra"].astype(bool)))
+            janela = (
+                "holdout (dez/2025, não visto no treino)" if inicio >= pd.Timestamp("2025-12-01")
+                else "validação (out/nov 2025)" if inicio >= pd.Timestamp("2025-10-01")
+                else "treino (anterior a out/2025)"
+            )
+            st.caption(f"Janela do modelo para essa data: {janela}. O campo 'violou' é o resultado real — serve só para conferir a ordenação.")
+    else:
+        arquivo = st.file_uploader("CSV com colunas: id, prioridade, produto, categoria, grupo, dataHora", type="csv")
+        modelo_csv = pd.DataFrame(
+            [["INC-EXEMPLO-1", 3, "lemn", "cat45", "Team05", "2026-01-05T09:30:00"]],
+            columns=["id", "prioridade", "produto", "categoria", "grupo", "dataHora"],
+        )
+        st.download_button("Baixar modelo (.csv)", modelo_csv.to_csv(index=False).encode("utf-8-sig"), "modelo_fila.csv", "text/csv")
+        if arquivo is not None:
+            bruto = pd.read_csv(arquivo)
+            bruto.columns = [c.strip().lower() for c in bruto.columns]
+            entradas = pd.DataFrame(
+                {
+                    "id": bruto.get("id", pd.Series(range(1, len(bruto) + 1))).astype(str),
+                    "prioridade": pd.to_numeric(bruto.get("prioridade"), errors="coerce").fillna(3).astype(int),
+                    "produto": bruto.get("produto", "Não informado").fillna("Não informado"),
+                    "categoria": bruto.get("categoria", "Não informado").fillna("Não informado"),
+                    "grupo": bruto.get("grupo", "Não informado").fillna("Não informado"),
+                    "data_hora": bruto.get("datahora", bruto.get("aberto")),
+                }
+            )
+
+    if entradas is not None and not entradas.empty:
+        pontuado = modelo_risco.pontuar_lote(entradas.rename(columns={"data_hora": "data_hora"}))
+        fila = entradas.reset_index(drop=True).join(pontuado.reset_index(drop=True))
+        fila = fila.sort_values("probabilidade", ascending=False).reset_index(drop=True)
+        if resultado_real is not None:
+            fila["violou_real"] = fila["id"].map(resultado_real).fillna(False)
+
+        n_alto = int((fila["faixa"] == "Alto").sum())
+        esperadas = float(fila["probabilidade"].sum())
+        corte_top = max(1, int(np.ceil(len(fila) * 0.2)))
+        captura_top = fila["probabilidade"].iloc[:corte_top].sum() / max(esperadas, 1e-9)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Chamados na fila", fmt_int(len(fila)))
+        m2.metric("Risco alto", fmt_int(n_alto), f"{fmt_int(int((fila['faixa'] == 'Moderado').sum()))} moderado", delta_color="off")
+        m3.metric("Violações esperadas", fmt_num(esperadas, 1), "soma das probabilidades", delta_color="off")
+        m4.metric("Captura no topo 20%", fmt_pct(captura_top, 1))
+        if resultado_real is not None:
+            reais = int(fila["violou_real"].sum())
+            no_topo = int(fila["violou_real"].iloc[:corte_top].sum())
+            st.info(f"Conferência: neste dia real houve {reais} violação(ões) de OLA; {no_topo} está(ão) nos primeiros 20% da fila ordenada pelo modelo.")
+
+        exibicao = fila.copy()
+        exibicao["probabilidade"] = exibicao["probabilidade"].map(lambda v: fmt_pct(v, 1))
+        for col in [c for c in exibicao.columns if c.startswith("contribuicao_")]:
+            exibicao[col] = exibicao[col].map(lambda v: f"{v * 100:+.1f} pp")
+        exibicao = exibicao.rename(
+            columns={
+                "id": "Chamado", "prioridade": "Prioridade", "produto": "Produto", "categoria": "Categoria",
+                "grupo": "Grupo", "data_hora": "Aberto", "probabilidade": "Risco", "faixa": "Faixa",
+                "violou_real": "Violou (real)", "contribuicao_Prioridade": "Δ Prioridade",
+                "contribuicao_Produto": "Δ Produto", "contribuicao_Categoria": "Δ Categoria", "contribuicao_Grupo": "Δ Grupo",
+            }
+        )
+        st.dataframe(exibicao, width="stretch", hide_index=True)
+        st.caption(
+            "Δ = quanto cada fator move o risco em relação ao valor mais comum no treino (leitura do próprio modelo, não SHAP). "
+            "O registro de ações (atribuído/escalado/resolvido) está na interface React."
+        )
+        st.download_button(
+            "Baixar fila priorizada (.csv)",
+            data=fila.to_csv(index=False).encode("utf-8-sig"),
+            file_name="fila_priorizada_ola.csv",
+            mime="text/csv",
         )
 
 

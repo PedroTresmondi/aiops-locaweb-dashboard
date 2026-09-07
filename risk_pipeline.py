@@ -61,6 +61,56 @@ class ResultadoRiscoOLA:
     inicio_base: pd.Timestamp
     inicio_holdout: pd.Timestamp
     fim_holdout: pd.Timestamp
+    perfil_neutro: dict[str, object]
+
+    def _faixa(self, probabilidade: float) -> str:
+        if probabilidade >= self.limiar_alto:
+            return "Alto"
+        if probabilidade >= self.limiar_medio:
+            return "Moderado"
+        return "Baixo"
+
+    def _probabilidade_calibrada(self, x: pd.DataFrame) -> np.ndarray:
+        """Ensemble com os pesos escolhidos na validação e Platt scaling aplicado."""
+        p_et = self.modelos["Extra Trees"].predict_proba(x)[:, 1]
+        p_hist = self.modelos["HistGradientBoosting"].predict_proba(x)[:, 1]
+        bruto = self.peso_extra_trees * p_et + (1 - self.peso_extra_trees) * p_hist
+        return self.calibrador.predict_proba(bruto.reshape(-1, 1))[:, 1]
+
+    def _features_lote(self, entradas: pd.DataFrame) -> pd.DataFrame:
+        """Constrói apenas as features conhecidas na abertura para um lote de chamados.
+
+        Espera as colunas ``prioridade``, ``produto``, ``categoria``, ``grupo`` e
+        ``data_hora``. Qualquer outra coluna é ignorada.
+        """
+        momento = pd.to_datetime(entradas["data_hora"], errors="coerce")
+        momento = momento.fillna(pd.Timestamp(self.inicio_base))
+
+        def rotulo(coluna: str) -> pd.Series:
+            serie = entradas.get(coluna)
+            if serie is None:
+                return pd.Series("Não informado", index=entradas.index)
+            texto = serie.astype("string").str.strip()
+            return texto.mask(texto.isna() | (texto == ""), "Não informado").astype(str)
+
+        return pd.DataFrame(
+            {
+                "Prioridade_Cod": (
+                    pd.to_numeric(entradas.get("prioridade"), errors="coerce")
+                    .fillna(3)
+                    .clip(1, 5)
+                    .astype(int)
+                ),
+                "Produto": rotulo("produto"),
+                "Categoria": rotulo("categoria"),
+                "Grupo designado": rotulo("grupo"),
+                "hora_abertura": momento.dt.hour.astype(int),
+                "dia_semana": momento.dt.dayofweek.astype(int),
+                "mes": momento.dt.month.astype(int),
+                "dias_desde_inicio": (momento.dt.normalize() - self.inicio_base).dt.days.astype(int),
+            },
+            index=entradas.index,
+        )
 
     def prever(
         self,
@@ -70,37 +120,61 @@ class ResultadoRiscoOLA:
         grupo: str,
         data_hora: datetime | pd.Timestamp,
     ) -> dict[str, float | str]:
-        momento = pd.Timestamp(data_hora)
         entrada = pd.DataFrame(
             [
                 {
-                    "Prioridade_Cod": int(prioridade),
-                    "Produto": produto or "Não informado",
-                    "Categoria": categoria or "Não informado",
-                    "Grupo designado": grupo or "Não informado",
-                    "hora_abertura": momento.hour,
-                    "dia_semana": momento.dayofweek,
-                    "mes": momento.month,
-                    "dias_desde_inicio": (momento.normalize() - self.inicio_base).days,
+                    "prioridade": int(prioridade),
+                    "produto": produto or "Não informado",
+                    "categoria": categoria or "Não informado",
+                    "grupo": grupo or "Não informado",
+                    "data_hora": pd.Timestamp(data_hora),
                 }
             ]
         )
-        p_et = self.modelos["Extra Trees"].predict_proba(entrada[FEATURES_RISCO])[:, 1]
-        p_hist = self.modelos["HistGradientBoosting"].predict_proba(entrada[FEATURES_RISCO])[:, 1]
-        bruto = self.peso_extra_trees * p_et + (1 - self.peso_extra_trees) * p_hist
-        probabilidade = float(self.calibrador.predict_proba(bruto.reshape(-1, 1))[0, 1])
-        if probabilidade >= self.limiar_alto:
-            faixa = "Alto"
-        elif probabilidade >= self.limiar_medio:
-            faixa = "Moderado"
-        else:
-            faixa = "Baixo"
+        features = self._features_lote(entrada)
+        probabilidade = float(self._probabilidade_calibrada(features[FEATURES_RISCO])[0])
         return {
             "probabilidade": probabilidade,
-            "faixa": faixa,
+            "faixa": self._faixa(probabilidade),
             "limiar_medio": self.limiar_medio,
             "limiar_alto": self.limiar_alto,
         }
+
+    def pontuar_lote(self, entradas: pd.DataFrame, explicar: bool = True) -> pd.DataFrame:
+        """Pontua um lote de chamados e devolve risco, faixa e contribuição por fator.
+
+        A contribuição de cada fator é a diferença entre o risco calculado e o
+        risco do mesmo chamado com aquele fator trocado pelo valor mais comum no
+        treino (``perfil_neutro``). Positivo = o fator empurra o risco para cima.
+        Não é SHAP; é uma leitura direta do próprio modelo, sem regra manual.
+        """
+        if entradas.empty:
+            colunas = ["probabilidade", "faixa"]
+            if explicar:
+                colunas += [f"contribuicao_{r}" for r in ("Prioridade", "Produto", "Categoria", "Grupo")]
+            return pd.DataFrame(columns=colunas)
+
+        features = self._features_lote(entradas)
+        probabilidade = self._probabilidade_calibrada(features[FEATURES_RISCO])
+        resultado = pd.DataFrame(
+            {
+                "probabilidade": probabilidade,
+                "faixa": [self._faixa(p) for p in probabilidade],
+            },
+            index=entradas.index,
+        )
+        if explicar:
+            for coluna, chave in [
+                ("Prioridade_Cod", "Prioridade"),
+                ("Produto", "Produto"),
+                ("Categoria", "Categoria"),
+                ("Grupo designado", "Grupo"),
+            ]:
+                neutro = features.copy()
+                neutro[coluna] = self.perfil_neutro[coluna]
+                risco_neutro = self._probabilidade_calibrada(neutro[FEATURES_RISCO])
+                resultado[f"contribuicao_{chave}"] = probabilidade - risco_neutro
+        return resultado
 
 
 def preparar_base_risco(df: pd.DataFrame) -> pd.DataFrame:
@@ -182,6 +256,15 @@ def executar_pipeline_risco(df: pd.DataFrame) -> ResultadoRiscoOLA:
     x_treino, y_treino = base.loc[treino, FEATURES_RISCO], base.loc[treino, "alvo"]
     x_valid, y_valid = base.loc[validacao, FEATURES_RISCO], base.loc[validacao, "alvo"]
     x_holdout, y_holdout = base.loc[holdout, FEATURES_RISCO], base.loc[holdout, "alvo"]
+
+    # Valor mais comum no treino por fator: referência para medir a contribuição
+    # individual de cada campo no risco de um chamado.
+    perfil_neutro: dict[str, object] = {
+        "Prioridade_Cod": int(base.loc[treino, "Prioridade_Cod"].median()),
+        "Produto": str(base.loc[treino, "Produto"].mode().iloc[0]),
+        "Categoria": str(base.loc[treino, "Categoria"].mode().iloc[0]),
+        "Grupo designado": str(base.loc[treino, "Grupo designado"].mode().iloc[0]),
+    }
 
     modelos = {
         "Extra Trees": _modelo_arvore("Extra Trees"),
@@ -286,4 +369,5 @@ def executar_pipeline_risco(df: pd.DataFrame) -> ResultadoRiscoOLA:
         inicio_base=inicio_base,
         inicio_holdout=base.loc[holdout, "Aberto"].min().normalize(),
         fim_holdout=base.loc[holdout, "Aberto"].max().normalize(),
+        perfil_neutro=perfil_neutro,
     )

@@ -41,3 +41,110 @@ export type Models = {
   calibration: { decil: number; previsto: number; observado: number; incidentes: number }[]
 }
 
+export type Perfil = 'analista' | 'gestor' | 'administrador'
+
+export type FatorRisco = {
+  fator: string
+  valor: string
+  contribuicao: number
+  taxaHistorica: number | null
+  amostra: number
+}
+
+export type ItemFila = {
+  id: string
+  prioridade: number
+  produto: string
+  categoria: string
+  grupo: string
+  aberto: string
+  probabilidade: number
+  faixa: 'Alto' | 'Moderado' | 'Baixo'
+  fatores: FatorRisco[]
+  violouReal?: boolean
+}
+
+export type ResumoFila = {
+  total: number
+  filaAlta: number
+  filaModerada: number
+  violacoesEsperadas: number
+  corteFilaAlta: number
+  capturaTop20Pct: number
+  violacoesReais?: number
+  violacoesReaisNoTop20?: number
+}
+
+export type RespostaFila = {
+  origem: string
+  loteId?: string | null
+  referencia?: string | null
+  janelaModelo?: string
+  resumo: ResumoFila
+  fila: ItemFila[]
+}
+
+export type ResumoAcoes = {
+  ticketsComAcao: number
+  totalEventos: number
+  totalLotes: number
+  porAcao: Record<string, number>
+  riscoPriorizado: number
+}
+
+export type AcaoRegistro = {
+  id: number
+  ticketRef: string
+  acao: string
+  faixa: string | null
+  probabilidade: number | null
+  nota: string | null
+  perfil: string | null
+  criadoEm: string
+}
+
+export type Drift = {
+  janelaReferencia: { inicio: string; fim: string; incidentes: number; descricao: string }
+  janelaRecente: { inicio: string; fim: string; incidentes: number; descricao: string }
+  features: { feature: string; psi: number; nivel: string; detalhe: { faixa: string; esperado: number; atual: number; psi: number }[] }[]
+  volumeMedioDia: { referencia: number; recente: number; razao: number }
+  taxaViolacao: { referencia: number; recente: number; variacaoPP: number }
+  piorPsi: number
+  revalidacaoRecomendada: boolean
+}
+
+export type ModelStatus = {
+  snapshot: string
+  diasDesdeSnapshot: number
+  cicloRetreinoDias: number
+  origemDados: string
+  risco: { treino: string; validacao: string; holdout: string; rocAuc: number; prAuc: number }
+  volume: { holdout: string; maeD1: number; maeD7: number }
+  deriva: { piorPsi: number; volumeRazao: number; revalidacaoRecomendada: boolean }
+  revalidacaoRecomendada: boolean
+  motivos: string[]
+}
+
+export type Optimization = {
+  previsaoD1Total: number
+  capacidade: number
+  limitePorCategoria: number
+  custoUniforme: boolean
+  riscoCoberto: number
+  riscoTotal: number
+  coberturaPct: number
+  precoSombra: number
+  selecionados: { produto: string; categoriaDominante: string; cargaEstimadaD1: number; custo: number }[]
+  fila: { produto: string; categoriaDominante: string; incidentesTotal: number; olaViolados: number; cargaEstimadaD1: number; selecionado: boolean }[]
+  sensibilidade: { capacidade: number; riscoCoberto: number; pctDoTotal: number }[]
+}
+
+export type Segmentation = {
+  dimensao: string
+  kEscolhido: number
+  criterio: string
+  escolhaK: { k: number; silhouette: number; inertia: number }[]
+  clusters: { posicao: number; rotulo: string; entidades: number; incidentesTotal: number; olaViolados: number; taxaMedia: number; duracaoMediaH: number }[]
+  entidades: { entidade: string; cluster: number; rotulo: string; incidentesTotal: number; incidentesKpi: number; olaViolados: number; taxaViolacao: number; duracaoMediaH: number }[]
+}
+

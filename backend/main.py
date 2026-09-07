@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -9,17 +9,22 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from model_pipeline import executar_pipeline
 from risk_pipeline import executar_pipeline_risco
 
+from backend import datasource, legacy_forecast, monitoring, optimization, segmentation, store
+from backend.telemetry import configurar_telemetria
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "dataset_limpo.parquet"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
+
+CAMPOS_FILA = ["id", "prioridade", "produto", "categoria", "grupo", "dataHora"]
 
 app = FastAPI(
     title="VisionOps AI API",
@@ -33,6 +38,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+configurar_telemetria(app)
+
+
+@app.on_event("startup")
+def _preparar_estado() -> None:
+    store.inicializar()
 
 
 class TriageRequest(BaseModel):
@@ -60,26 +72,8 @@ def _clean_label(value: object) -> str:
 
 @lru_cache(maxsize=1)
 def load_data() -> pd.DataFrame:
-    df = pd.read_parquet(DATASET)
-    df["Aberto"] = pd.to_datetime(df["Aberto"])
-    if "Resolvido" in df:
-        df["Resolvido"] = pd.to_datetime(df["Resolvido"], errors="coerce")
-    numero = next((c for c in df.columns if c.endswith("mero")), None)
-    if numero and numero != "Número":
-        df = df.rename(columns={numero: "Número"})
-    status = df["Status"].astype("string")
-    if "OLA_Violado_Regra" not in df:
-        limites = df["Prioridade_Cod"].map({1: 4, 2: 4, 3: 12, 4: 24, 5: 96})
-        df["OLA_Violado_Regra"] = df["Duracao_Horas"].gt(limites)
-    if "Elegivel_KPI_Regra" not in df:
-        sem_pai = df["Incidente Pai"].isna() | df["Incidente Pai"].astype(str).str.strip().eq("")
-        com_intervencao = ~status.str.upper().str.startswith("SEM INTERVEN", na=False)
-        df["Elegivel_KPI_Regra"] = df["Prioridade_Cod"].isin([1, 2, 3]) & sem_pai & com_intervencao
-    if "OLA_Violado_KPI_Regra" not in df:
-        df["OLA_Violado_KPI_Regra"] = df["OLA_Violado_Regra"] & df["Elegivel_KPI_Regra"]
-    for column in ["OLA_Violado_Regra", "Elegivel_KPI_Regra", "OLA_Violado_KPI_Regra"]:
-        df[column] = df[column].astype(bool)
-    return df
+    """Incidentes tratados. Origem controlada por ``VISIONOPS_DATASOURCE`` (parquet | mysql)."""
+    return datasource.carregar()
 
 
 @lru_cache(maxsize=1)
@@ -371,6 +365,360 @@ def audit(limit: int = Query(default=100, ge=10, le=500)) -> dict:
     sample["Aberto"] = sample["Aberto"].dt.strftime("%Y-%m-%d %H:%M")
     sample = sample.where(pd.notna(sample), None)
     return {"missing": missing, "sample": sample.to_dict(orient="records")}
+
+
+# ---------------------------------------------------------------------------
+# Fila operacional em lote (Sprint 4)
+# ---------------------------------------------------------------------------
+
+class ItemFila(BaseModel):
+    id: str | None = None
+    prioridade: int = Field(default=3, ge=1, le=5)
+    produto: str = "Não informado"
+    categoria: str = "Não informado"
+    grupo: str = "Não informado"
+    dataHora: datetime | None = None
+
+
+class LoteFilaRequest(BaseModel):
+    itens: list[ItemFila]
+    referencia: str | None = None
+    persistir: bool = False
+
+
+class AcaoRequest(BaseModel):
+    ticketRef: str
+    acao: Literal["atribuido", "escalado", "resolvido", "dispensado"]
+    loteId: str | None = None
+    prioridade: int | None = None
+    faixa: str | None = None
+    probabilidade: float | None = None
+    nota: str | None = None
+    perfil: str | None = None
+
+
+def _tabelas_taxa(eligible: pd.DataFrame) -> dict[str, dict[str, tuple[int, float]]]:
+    tabelas: dict[str, dict[str, tuple[int, float]]] = {}
+    for chave, coluna in [
+        ("Prioridade", "Prioridade_Cod"),
+        ("Produto", "Produto"),
+        ("Categoria", "Categoria"),
+        ("Grupo", "Grupo designado"),
+    ]:
+        valores = eligible[coluna].map(_clean_label) if coluna != "Prioridade_Cod" else eligible[coluna].astype(str)
+        agrupado = eligible.assign(_v=valores).groupby("_v")["OLA_Violado_KPI_Regra"]
+        tabelas[chave] = {str(k): (int(v.size), float(v.mean())) for k, v in agrupado}
+    return tabelas
+
+
+def _janela_modelo(momento: pd.Timestamp) -> str:
+    if momento >= pd.Timestamp("2025-12-01"):
+        return "holdout — dezembro/2025, não visto no treino do modelo de risco"
+    if momento >= pd.Timestamp("2025-10-01"):
+        return "validação — out/nov 2025, usada para calibrar o modelo"
+    return "treino — anterior a out/2025"
+
+
+def _entradas_frame(itens: list[ItemFila]) -> pd.DataFrame:
+    registros = []
+    for posicao, item in enumerate(itens):
+        registros.append(
+            {
+                "id": (item.id or f"linha-{posicao + 1}").strip(),
+                "prioridade": item.prioridade,
+                "produto": _clean_label(item.produto),
+                "categoria": _clean_label(item.categoria),
+                "grupo": _clean_label(item.grupo),
+                "data_hora": item.dataHora or pd.Timestamp("2026-01-01T09:00:00"),
+            }
+        )
+    return pd.DataFrame(registros)
+
+
+def _pontuar_fila(entradas: pd.DataFrame) -> tuple[list[dict], dict]:
+    modelo = risk_model()
+    eligible = load_data()
+    eligible = eligible[eligible["Elegivel_KPI_Regra"]]
+    tabelas = _tabelas_taxa(eligible)
+
+    pontuado = modelo.pontuar_lote(entradas)
+    combinado = entradas.reset_index(drop=True).join(pontuado.reset_index(drop=True))
+    combinado = combinado.sort_values("probabilidade", ascending=False).reset_index(drop=True)
+
+    fila: list[dict] = []
+    for linha in combinado.itertuples():
+        momento = pd.Timestamp(linha.data_hora)
+        fatores = []
+        for chave, valor in [
+            ("Prioridade", str(int(linha.prioridade))),
+            ("Produto", linha.produto),
+            ("Categoria", linha.categoria),
+            ("Grupo", linha.grupo),
+        ]:
+            amostra, taxa = tabelas.get(chave, {}).get(valor, (0, None))
+            fatores.append(
+                {
+                    "fator": chave,
+                    "valor": valor,
+                    "contribuicao": round(float(getattr(linha, f"contribuicao_{chave}")), 4),
+                    "taxaHistorica": None if taxa is None else round(taxa, 4),
+                    "amostra": amostra,
+                }
+            )
+        fatores.sort(key=lambda item: abs(item["contribuicao"]), reverse=True)
+        fila.append(
+            {
+                "id": linha.id,
+                "prioridade": int(linha.prioridade),
+                "produto": linha.produto,
+                "categoria": linha.categoria,
+                "grupo": linha.grupo,
+                "aberto": momento.isoformat(),
+                "probabilidade": round(float(linha.probabilidade), 4),
+                "faixa": linha.faixa,
+                "fatores": fatores,
+            }
+        )
+
+    probabilidades = combinado["probabilidade"].to_numpy()
+    total = len(fila)
+    corte_top = max(1, int(np.ceil(total * 0.2)))
+    resumo = {
+        "total": total,
+        "filaAlta": int((combinado["faixa"] == "Alto").sum()),
+        "filaModerada": int((combinado["faixa"] == "Moderado").sum()),
+        "violacoesEsperadas": round(float(probabilidades.sum()), 1),
+        "corteFilaAlta": round(float(modelo.limiar_alto), 4),
+        "capturaTop20Pct": (
+            round(float(probabilidades[:corte_top].sum() / probabilidades.sum()), 3)
+            if probabilidades.sum() > 0
+            else 0.0
+        ),
+    }
+    return fila, resumo
+
+
+@app.get("/api/queue/template", response_class=PlainTextResponse)
+def queue_template() -> str:
+    df = load_data()
+    produto = next((v for v in df["Produto"].dropna().astype(str).unique() if v), "lemn")
+    categoria = next((v for v in df["Categoria"].dropna().astype(str).unique() if v), "cat45")
+    grupos = sorted(df["Grupo designado"].dropna().astype(str).unique())[:2] or ["Team05", "Team11"]
+    linhas = [
+        ",".join(CAMPOS_FILA),
+        f"INC-EXEMPLO-1,3,{produto},{categoria},{grupos[0]},2026-01-05T09:30:00",
+        f"INC-EXEMPLO-2,2,Não informado,Não informado,{grupos[-1]},2026-01-05T14:00:00",
+    ]
+    return "\n".join(linhas) + "\n"
+
+
+@app.get("/api/queue/sample")
+def queue_sample(
+    data: str | None = None,
+    dias: int = Query(default=1, ge=1, le=14),
+) -> dict:
+    df = load_data()
+    eligible = df[df["Elegivel_KPI_Regra"]].copy()
+    if eligible.empty:
+        raise HTTPException(status_code=404, detail="Sem incidentes elegíveis no snapshot.")
+    ultimo_dia = eligible["Aberto"].max().normalize()
+    try:
+        inicio = pd.Timestamp(data).normalize() if data else ultimo_dia
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Data inválida (use AAAA-MM-DD).")
+    fim = inicio + timedelta(days=dias)
+    recorte = eligible[(eligible["Aberto"] >= inicio) & (eligible["Aberto"] < fim)].copy()
+    if recorte.empty:
+        raise HTTPException(status_code=404, detail="Nenhum incidente elegível nessa janela do snapshot.")
+
+    itens = [
+        ItemFila(
+            id=str(numero),
+            prioridade=int(prioridade),
+            produto=_clean_label(produto),
+            categoria=_clean_label(categoria),
+            grupo=_clean_label(grupo),
+            dataHora=pd.Timestamp(aberto).to_pydatetime(),
+        )
+        for numero, prioridade, produto, categoria, grupo, aberto in zip(
+            recorte["Número"], recorte["Prioridade_Cod"], recorte["Produto"],
+            recorte["Categoria"], recorte["Grupo designado"], recorte["Aberto"],
+        )
+    ]
+    fila, resumo = _pontuar_fila(_entradas_frame(itens))
+
+    violou = dict(zip(recorte["Número"].astype(str), recorte["OLA_Violado_KPI_Regra"].astype(bool)))
+    violacoes_reais = int(sum(violou.values()))
+    corte_top = max(1, int(np.ceil(len(fila) * 0.2)))
+    capturadas_top = sum(1 for item in fila[:corte_top] if violou.get(item["id"], False))
+    for item in fila:
+        item["violouReal"] = bool(violou.get(item["id"], False))
+
+    return {
+        "origem": "snapshot",
+        "referencia": f"{inicio:%Y-%m-%d} (+{dias}d)" if dias > 1 else f"{inicio:%Y-%m-%d}",
+        "janelaModelo": _janela_modelo(inicio),
+        "resumo": {
+            **resumo,
+            "violacoesReais": violacoes_reais,
+            "violacoesReaisNoTop20": capturadas_top,
+        },
+        "fila": fila,
+    }
+
+
+@app.post("/api/queue/score")
+def queue_score(payload: LoteFilaRequest) -> dict:
+    if not payload.itens:
+        raise HTTPException(status_code=422, detail="Envie ao menos um chamado.")
+    if len(payload.itens) > 5000:
+        raise HTTPException(status_code=422, detail="Limite de 5000 chamados por lote.")
+    fila, resumo = _pontuar_fila(_entradas_frame(payload.itens))
+
+    lote_id = None
+    if payload.persistir:
+        lote_id = f"lote-{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+        store.registrar_lote(
+            lote_id, "csv", payload.referencia, resumo["total"],
+            resumo["filaAlta"], resumo["violacoesEsperadas"],
+        )
+    return {"origem": "csv", "loteId": lote_id, "referencia": payload.referencia, "resumo": resumo, "fila": fila}
+
+
+@app.post("/api/actions")
+def registrar_acao(payload: AcaoRequest) -> dict:
+    try:
+        return store.registrar_acao(
+            payload.ticketRef,
+            payload.acao,
+            lote_id=payload.loteId,
+            prioridade=payload.prioridade,
+            faixa=payload.faixa,
+            probabilidade=payload.probabilidade,
+            nota=payload.nota,
+            perfil=payload.perfil,
+        )
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro))
+
+
+@app.get("/api/actions/summary")
+def acoes_resumo() -> dict:
+    return store.resumo_acoes()
+
+
+@app.get("/api/actions/recent")
+def acoes_recentes(limit: int = Query(default=40, ge=1, le=200)) -> dict:
+    return {"itens": store.acoes_recentes(limit)}
+
+
+# ---------------------------------------------------------------------------
+# Monitor de deriva, status do modelo, otimização e segmentação (Sprint 4)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/drift")
+def drift() -> dict:
+    return monitoring.analisar_deriva(load_data())
+
+
+@app.get("/api/model-status")
+def model_status() -> dict:
+    df = load_data()
+    risco = risk_model()
+    volume = volume_model()
+    deriva = monitoring.analisar_deriva(df)
+    snapshot = df["Aberto"].max()
+    dias_desde = int((pd.Timestamp.now() - snapshot).days)
+    metricas_op = volume.metricas_operacionais.set_index("horizonte")
+
+    motivos = []
+    if deriva["revalidacaoRecomendada"]:
+        motivos.append(f"PSI de deriva em {deriva['piorPsi']} (limite 0,20).")
+    if dias_desde > 45:
+        motivos.append(f"Snapshot com {dias_desde} dias — acima do ciclo de 45 dias.")
+
+    return {
+        "snapshot": snapshot.date().isoformat(),
+        "diasDesdeSnapshot": dias_desde,
+        "cicloRetreinoDias": 45,
+        "origemDados": datasource.origem(),
+        "risco": {
+            "treino": "incidentes elegíveis anteriores a 01/10/2025",
+            "validacao": "outubro e novembro de 2025",
+            "holdout": f"{risco.inicio_holdout:%d/%m/%Y} a {risco.fim_holdout:%d/%m/%Y}",
+            "rocAuc": round(float(risco.metricas_holdout["ROC_AUC"]), 3),
+            "prAuc": round(float(risco.metricas_holdout["PR_AUC"]), 3),
+        },
+        "volume": {
+            "holdout": "01–31/12/2025",
+            "maeD1": round(float(metricas_op.loc["D+1", "holdout_MAE"]), 1),
+            "maeD7": round(float(metricas_op.loc["D+7", "holdout_MAE"]), 1),
+        },
+        "deriva": {
+            "piorPsi": deriva["piorPsi"],
+            "volumeRazao": deriva["volumeMedioDia"]["razao"],
+            "revalidacaoRecomendada": deriva["revalidacaoRecomendada"],
+        },
+        "revalidacaoRecomendada": bool(deriva["revalidacaoRecomendada"] or dias_desde > 45),
+        "motivos": motivos,
+    }
+
+
+@app.get("/api/optimization")
+def optimization_endpoint(
+    capacidade: float = Query(default=5, ge=1, le=60),
+    limitePorCategoria: int = Query(default=2, ge=1, le=12),
+) -> dict:
+    df = load_data()
+    previsao = volume_model().previsoes["D+1"]["ponto"]
+    try:
+        return optimization.otimizar_alocacao(
+            df, previsao, capacidade=capacidade, limite_por_categoria=limitePorCategoria
+        )
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro))
+
+
+@app.get("/api/segmentation")
+def segmentation_endpoint(
+    dimension: Literal["Produto", "Categoria", "Grupo designado"] = "Produto",
+) -> dict:
+    try:
+        return segmentation.segmentar(load_data(), dimension)
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro))
+
+
+# ---------------------------------------------------------------------------
+# Contrato legado da Sprint 3 (endpoints usados no vídeo pitch e nas evidências)
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _previsao_legado_cache(chave: str) -> list[dict]:
+    return legacy_forecast.gerar_previsoes(load_data())
+
+
+@app.get("/health")
+def health_legado() -> dict:
+    return {"status": "ok", "servico": "aiops-sla-monitor"}
+
+
+@app.get("/incidentes/total")
+def incidentes_total() -> dict:
+    return {"total_incidentes_no_banco": int(len(load_data()))}
+
+
+@app.get("/previsao")
+def previsao_legado() -> list[dict]:
+    df = load_data()
+    resultados = _previsao_legado_cache(str(df["Aberto"].max()))
+    store.registrar_previsoes_legado(resultados)
+    return resultados
+
+
+@app.get("/previsao/historico")
+def previsao_historico_legado(limit: int = Query(default=200, ge=1, le=500)) -> list[dict]:
+    return store.historico_previsoes_legado(limit)
 
 
 if FRONTEND_DIST.exists():
