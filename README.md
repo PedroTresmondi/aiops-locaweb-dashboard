@@ -1,8 +1,9 @@
 # visionOps AI — Central de Operações
 
 Aplicação Streamlit do Challenge FIAP × Locaweb 2026. A solução transforma o histórico
-anonimizado de incidentes em previsão de volume, priorização de risco de OLA, diagnóstico
-de qualidade e plano de ação operacional.
+anonimizado de incidentes em uma central de decisão: previsão de volume, triagem preditiva
+de OLA, investigação de causas combinadas, dimensionamento de capacidade e plano de ação
+exportável.
 
 Aplicação pública: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
 
@@ -19,6 +20,19 @@ Aplicação pública: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
 
 O app identifica explicitamente cada elemento como observado, resultado do modelo, cenário
 ou recomendação. Não há geração de métricas sintéticas nem chamadas a IA generativa.
+
+## Fluxos funcionais da Sprint 4
+
+- **Central operacional:** resume volume, faixa prevista, OLA e sinais prioritários.
+- **Triagem preditiva:** recebe prioridade, data/hora, produto, categoria e grupo e calcula
+  risco calibrado de violação usando apenas informações disponíveis na abertura. A ficha de
+  decisão pode ser baixada em CSV.
+- **Diagnóstico de OLA:** cruza categoria, produto e grupo; mede escala, taxa, lift, excesso
+  de duração e recorrência; abre o histórico mensal da causa selecionada e exporta a fila.
+- **Capacidade & ação:** converte a faixa D+1 em analistas-equivalentes a partir de premissas
+  editáveis de produtividade, ocupação, indisponibilidade e equipe disponível.
+- **Modelos & auditoria:** expõe holdouts temporais, benchmarks, calibração, importância das
+  features, regras do KPI, cobertura dos campos e registros filtrados.
 
 ## Modelo operacional validado
 
@@ -58,15 +72,33 @@ Essas datas são consequência do limite da base, não previsões ao vivo para a
 `Dia +7` significa o volume daquele dia, e não a soma dos próximos sete dias. O modelo não
 possui indicador de feriado, limitação relevante para a estimativa de 01/01.
 
+## Modelo de risco de OLA
+
+O segundo modelo atende à triagem de incidentes elegíveis (P1–P3) e não usa duração,
+resolução, encerramento ou o próprio alvo como feature. O desenho temporal é:
+
+- treino: histórico anterior a outubro de 2025;
+- seleção e calibração: outubro e novembro de 2025;
+- holdout final: dezembro de 2025, com 1.438 incidentes e 125 violações.
+
+O ensemble escolhido antes do holdout combina 50% Extra Trees e 50%
+HistGradientBoosting, com Platt scaling para converter o score balanceado em probabilidade.
+No holdout, obteve ROC-AUC **0,775**, PR-AUC **0,280** e Brier **0,074**. Aplicando o corte
+da fila alta definido na validação, revisa **15,8%** dos incidentes e captura **39,2%** das
+violações, com lift de **2,48×** sobre a prevalência do mês. O score apoia a decisão; não
+deve automatizar atribuição de culpa ou bloqueio de atendimento.
+
 ## Estrutura
 
 ```text
 aiops-locaweb-dashboard/
 ├── app.py                    # interface e análises operacionais
 ├── model_pipeline.py         # features, validação, benchmark e treino final
+├── risk_pipeline.py          # classificação e calibração temporal de risco de OLA
 ├── dataset_limpo.parquet     # base tratada e regras auditadas de OLA
 ├── tests/
-│   └── test_pipeline.py      # testes dos resultados centrais
+│   ├── test_pipeline.py      # testes da previsão de volume
+│   └── test_risk_pipeline.py # testes da triagem preditiva
 ├── requirements.txt
 └── README.md
 ```
@@ -91,7 +123,9 @@ python -m unittest discover -s tests -v
 ## Limites de uso
 
 - O dataset é um snapshot e não possui ingestão contínua.
-- A previsão é de volume total; não prevê OLA, produto ou categoria individualmente.
+- O forecast prevê volume total; o classificador de OLA estima risco de incidentes elegíveis
+  a partir de um cenário informado na interface, não uma fila viva do ambiente da Locaweb.
 - Coeficientes descrevem associação no modelo e não provam causalidade.
-- Converter volume em headcount exige produtividade/tempo por analista, ausentes na fonte.
+- Converter volume em headcount exige produtividade/tempo por analista, ausentes na fonte;
+  por isso o simulador torna essas premissas explícitas e editáveis.
 - A cobertura histórica do cenário de priorização não equivale a violações que seriam evitadas.

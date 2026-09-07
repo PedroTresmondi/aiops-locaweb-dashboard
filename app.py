@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from model_pipeline import executar_pipeline
+from risk_pipeline import executar_pipeline_risco
 
 
 BASE = Path(__file__).parent
@@ -29,7 +31,8 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     .stApp { background: #F5F7FA; color: #10243E; }
-    [data-testid="stHeader"] { background: rgba(245,247,250,.86); }
+    [data-testid="stHeader"] { height: 0; background: transparent; }
+    [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu { display: none !important; }
     [data-testid="stSidebar"] { background: #0E2038; border-right: 0; }
     [data-testid="stSidebar"] * { color: #F7FAFC; }
     [data-testid="stSidebar"] [role="radiogroup"] label {
@@ -38,12 +41,20 @@ st.markdown(
     [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
         background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.12);
     }
-    .block-container { padding-top: 1.8rem; padding-bottom: 3rem; max-width: 1500px; }
+    .block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1500px; }
     h1, h2, h3 { color: #10243E; letter-spacing: -.025em; }
     h1 { font-weight: 800; font-size: 2rem; }
     h2 { font-weight: 750; font-size: 1.35rem; margin-top: .25rem; }
     .eyebrow { color: #F15A29; font-weight: 800; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
     .page-subtitle { color: #617085; font-size: .94rem; margin-top: -.55rem; margin-bottom: 1.25rem; }
+    .app-topbar {
+        display:flex; align-items:center; justify-content:space-between; gap:1rem;
+        background:#10243E; color:#F7FAFC; border-radius:14px; padding:.65rem .9rem;
+        margin:-.45rem 0 1.15rem; box-shadow:0 7px 24px rgba(16,36,62,.12);
+        font-size:.75rem; font-weight:700; letter-spacing:.035em;
+    }
+    .app-topbar .live { color:#7DE2CF; }
+    .app-topbar .muted { color:#C5D0DC; font-weight:500; }
     .context-strip { display: flex; gap: .55rem; flex-wrap: wrap; margin: .3rem 0 1.2rem 0; }
     .pill {
         background: #FFFFFF; color: #33455C; border: 1px solid #DDE4EC;
@@ -75,6 +86,20 @@ st.markdown(
     .source-box {
         background: #EEF2F6; border-radius: 10px; padding: .75rem .85rem;
         color: #506176; font-size: .78rem; line-height: 1.45;
+    }
+    .risk-panel {
+        background:#10243E; color:#F7FAFC; border-radius:18px; padding:1.25rem 1.35rem;
+        box-shadow:0 10px 28px rgba(16,36,62,.16); margin:.4rem 0 1rem;
+    }
+    .risk-panel .label { color:#A9B8C8; font-size:.7rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+    .risk-panel .value { color:#FFFFFF; font-size:2.35rem; line-height:1.05; font-weight:800; margin:.3rem 0; }
+    .risk-panel .copy { color:#D8E1EA; font-size:.86rem; line-height:1.5; }
+    .risk-panel.high { border-left:6px solid #F15A29; }
+    .risk-panel.medium { border-left:6px solid #D99A16; }
+    .risk-panel.low { border-left:6px solid #27A6A8; }
+    .section-kicker { color:#617085; font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; margin-bottom:.15rem; }
+    div[data-testid="stDownloadButton"] button, div[data-testid="stButton"] button {
+        border-radius:10px; border:1px solid #CAD4DF; font-weight:700;
     }
     div[data-testid="stDataFrame"] { border: 1px solid #E1E7EF; border-radius: 12px; overflow: hidden; }
     .stTabs [data-baseweb="tab-list"] { gap: .35rem; }
@@ -115,6 +140,11 @@ def estilizar_figura(fig: go.Figure, altura: int = 390, legenda: bool = True) ->
 
 
 def cabecalho(titulo: str, subtitulo: str, etiqueta: str) -> None:
+    st.markdown(
+        "<div class='app-topbar'><span class='live'>● MODELOS OPERACIONAIS ATIVOS</span>"
+        "<span class='muted'>snapshot auditável · sem dados sintéticos</span></div>",
+        unsafe_allow_html=True,
+    )
     st.markdown(f'<div class="eyebrow">{etiqueta}</div>', unsafe_allow_html=True)
     st.title(titulo)
     st.markdown(f'<div class="page-subtitle">{subtitulo}</div>', unsafe_allow_html=True)
@@ -176,6 +206,11 @@ def carregar_modelagem() -> object:
     return executar_pipeline(carregar_dados())
 
 
+@st.cache_resource(show_spinner="Validando modelo de risco de OLA…")
+def carregar_modelo_risco() -> object:
+    return executar_pipeline_risco(carregar_dados())
+
+
 def ranking_ola(df: pd.DataFrame, coluna: str, minimo: int = 30) -> pd.DataFrame:
     elegiveis = df[df["Elegivel_KPI_Regra"]].copy()
     elegiveis["entidade"] = elegiveis[coluna].fillna("Não informado")
@@ -206,10 +241,10 @@ def ranking_ola(df: pd.DataFrame, coluna: str, minimo: int = 30) -> pd.DataFrame
 def tendencias_recentes(df: pd.DataFrame) -> pd.DataFrame:
     conhecida = df[df["Categoria"].notna()].copy()
     data_max = conhecida["Aberto"].max().normalize()
-    recente = conhecida[conhecida["Aberto"] >= data_max - pd.Timedelta(13, unit="D")]
+    recente = conhecida[conhecida["Aberto"] >= data_max - timedelta(days=13)]
     anterior = conhecida[
-        (conhecida["Aberto"] >= data_max - pd.Timedelta(27, unit="D"))
-        & (conhecida["Aberto"] < data_max - pd.Timedelta(13, unit="D"))
+        (conhecida["Aberto"] >= data_max - timedelta(days=27))
+        & (conhecida["Aberto"] < data_max - timedelta(days=13))
     ]
     atual = recente.groupby("Categoria").size().rename("ultimos_14d")
     antes = anterior.groupby("Categoria").size().rename("14d_anteriores")
@@ -222,8 +257,63 @@ def tendencias_recentes(df: pd.DataFrame) -> pd.DataFrame:
     return tabela.sort_values("variacao", ascending=False).reset_index()
 
 
+def ranking_cruzamentos(
+    df: pd.DataFrame,
+    dimensao_a: str = "Categoria",
+    dimensao_b: str = "Produto",
+    minimo: int = 20,
+    incluir_nao_informado: bool = False,
+) -> pd.DataFrame:
+    """Prioriza causas combinadas por escala, taxa e recorrência recente."""
+    base = df[df["Elegivel_KPI_Regra"]].copy()
+    for coluna in [dimensao_a, dimensao_b]:
+        base[coluna] = base[coluna].fillna("Não informado").astype(str)
+    if not incluir_nao_informado:
+        base = base[(base[dimensao_a] != "Não informado") & (base[dimensao_b] != "Não informado")]
+    limite = base["Prioridade_Cod"].map({1: 4, 2: 4, 3: 12}).astype(float)
+    base["excesso_horas"] = np.where(
+        base["OLA_Violado_KPI_Regra"], (base["Duracao_Horas"] - limite).clip(lower=0), np.nan
+    )
+    corte_recente = base["Aberto"].max().normalize() - timedelta(days=29)
+    base["violacao_recente"] = (
+        base["OLA_Violado_KPI_Regra"] & (base["Aberto"] >= corte_recente)
+    ).astype(int)
+    ranking = (
+        base.groupby([dimensao_a, dimensao_b], dropna=False)
+        .agg(
+            elegiveis=("Aberto", "size"),
+            violacoes=("OLA_Violado_KPI_Regra", "sum"),
+            violacoes_30d=("violacao_recente", "sum"),
+            excesso_horas_mediano=("excesso_horas", "median"),
+        )
+        .reset_index()
+    )
+    ranking = ranking[ranking["elegiveis"] >= minimo].copy()
+    if ranking.empty:
+        return ranking
+    ranking["taxa_violacao"] = ranking["violacoes"] / ranking["elegiveis"]
+    ranking["lift_taxa"] = ranking["taxa_violacao"] / max(1e-9, taxa_ola)
+    ranking["score_prioridade"] = 100 * (
+        0.50 * ranking["violacoes"].rank(pct=True)
+        + 0.30 * ranking["taxa_violacao"].rank(pct=True)
+        + 0.20 * ranking["violacoes_30d"].rank(pct=True)
+    )
+    ranking["causa"] = ranking[dimensao_a].astype(str) + " × " + ranking[dimensao_b].astype(str)
+    return ranking.sort_values(["score_prioridade", "violacoes"], ascending=False).reset_index(drop=True)
+
+
+def evidencia_perfil(df: pd.DataFrame, coluna: str, valor: str | int) -> tuple[int, int, float]:
+    base = df[df["Elegivel_KPI_Regra"]].copy()
+    serie_coluna = base[coluna].fillna("Não informado").astype(str)
+    recorte = base[serie_coluna == str(valor)]
+    total = len(recorte)
+    violacoes = int(recorte["OLA_Violado_KPI_Regra"].sum())
+    return total, violacoes, violacoes / total if total else 0.0
+
+
 df = carregar_dados()
 modelo = carregar_modelagem()
+modelo_risco = carregar_modelo_risco()
 serie = modelo.serie
 snapshot = df["Aberto"].max()
 elegiveis = df[df["Elegivel_KPI_Regra"]]
@@ -235,6 +325,7 @@ previsao_d7 = modelo.previsoes["D+7"]
 tendencias = tendencias_recentes(df)
 metricas_idx = modelo.metricas.set_index("horizonte")
 metricas_op_idx = modelo.metricas_operacionais.set_index("horizonte")
+metricas_risco = modelo_risco.metricas_holdout
 
 
 with st.sidebar:
@@ -247,7 +338,14 @@ with st.sidebar:
     )
     pagina = st.radio(
         "Navegação",
-        ["Central operacional", "Modelo & previsão", "Risco de OLA", "Plano de ação", "Auditoria de dados"],
+        [
+            "Central operacional",
+            "Triagem preditiva",
+            "Diagnóstico de OLA",
+            "Capacidade & ação",
+            "Modelo & previsão",
+            "Auditoria de dados",
+        ],
         label_visibility="collapsed",
     )
     st.markdown("---")
@@ -256,7 +354,7 @@ with st.sidebar:
     st.caption(f"Até {snapshot:%d/%m/%Y %H:%M}")
     st.caption(f"{fmt_int(len(df))} incidentes · dados anonimizados")
     st.markdown("---")
-    st.caption("Challenge FIAP × Locaweb · Sprint 4")
+    st.caption("Challenge FIAP × Locaweb · Sprint 4 final")
 
 
 if pagina == "Central operacional":
@@ -308,14 +406,14 @@ if pagina == "Central operacional":
         card_acao(
             "24 horas · capacidade",
             f"Preparar operação para {fmt_int(previsao_d1['limite_inferior_80'])}–{fmt_int(previsao_d1['limite_superior_80'])} incidentes",
-            "Usar a faixa, não apenas o ponto central. Converter volume em pessoas exige taxa de atendimento por analista, ainda não presente na base.", "red",
+            "Usar a faixa, não apenas o ponto central. O simulador converte o volume em pessoas a partir das premissas informadas pelo operador.", "red",
         )
         top_cat = ranking_ola(df, "Categoria", 30).iloc[0]
         card_acao("24 horas · OLA", f"Abrir fila de revisão para {top_cat['entidade']}", f"A categoria concentra {fmt_int(top_cat['violacoes'])} violações elegíveis e taxa de {fmt_pct(top_cat['taxa_violacao'])}.", "gold")
         card_acao("7 dias · governança", "Tratar o salto de setembro como quebra de regime", "O volume mensal passou de 3.996 em ago/2025 para 21.561 em set/2025. Confirmar mudança de captura/monitoramento antes de promover novo modelo.", "teal")
 
     st.subheader("Sinais que exigem investigação")
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     with a:
         if not tendencias.empty:
             alta = tendencias.iloc[0]
@@ -326,6 +424,127 @@ if pagina == "Central operacional":
     with c:
         top_grupo = ranking_ola(df, "Grupo designado", 30).iloc[0]
         card_acao("Concentração · equipe", top_grupo["entidade"], f"{fmt_int(top_grupo['violacoes'])} violações elegíveis; investigar causas e distribuição interna antes de atribuir desempenho à equipe.", "teal")
+    with d:
+        card_acao(
+            "Modelo de triagem · dezembro",
+            f"{fmt_pct(metricas_risco['captura_violacoes'], 1)} das violações capturadas",
+            f"A fila alta revisa {fmt_pct(metricas_risco['taxa_revisada'], 1)} dos incidentes e concentra risco {fmt_num(metricas_risco['lift_fila_alta'], 1)}× acima da média.",
+            "red",
+        )
+
+
+elif pagina == "Triagem preditiva":
+    cabecalho(
+        "Triagem preditiva de OLA",
+        "Estime o risco no momento da abertura e transforme o score em uma decisão operacional verificável.",
+        "Modelo de classificação",
+    )
+    st.markdown(
+        """<div class="context-strip">
+        <span class="pill pill-model">PREDIÇÃO REAL · ensemble calibrado</span>
+        <span class="pill">SEM VAZAMENTO · somente dados da abertura</span>
+        <span class="pill pill-alert">DECISÃO ASSISTIDA · não substitui o operador</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="section-kicker">Dados disponíveis na abertura</div>', unsafe_allow_html=True)
+    t1, t2, t3 = st.columns([1, 1, 1])
+    mapa_prioridades = {"P1 · Crítica": 1, "P2 · Alta": 2, "P3 · Média": 3}
+    with t1:
+        prioridade_rotulo = st.selectbox("Prioridade", list(mapa_prioridades), index=2)
+        data_triagem = st.date_input(
+            "Data de abertura",
+            value=pd.Timestamp("2026-01-01").date(),
+            min_value=df["Aberto"].min().date(),
+            max_value=(snapshot.normalize() + timedelta(days=30)).date(),
+        )
+    with t2:
+        produtos = ["Não informado"] + sorted(df["Produto"].dropna().astype(str).unique().tolist())
+        categorias = ["Não informado"] + sorted(df["Categoria"].dropna().astype(str).unique().tolist())
+        produto_sel = st.selectbox("Produto", produtos, index=produtos.index("lemn") if "lemn" in produtos else 0)
+        categoria_sel = st.selectbox("Categoria", categorias, index=categorias.index("cat45") if "cat45" in categorias else 0)
+    with t3:
+        grupos = sorted(df["Grupo designado"].dropna().astype(str).unique().tolist())
+        grupo_sel = st.selectbox("Grupo designado", grupos, index=grupos.index("Team05") if "Team05" in grupos else 0)
+        hora_sel = st.slider("Hora de abertura", 0, 23, 9)
+
+    momento_triagem = pd.Timestamp(data_triagem) + timedelta(hours=int(hora_sel))
+    st.caption(
+        "A tela abre com um perfil histórico de alto risco para demonstração. Altere qualquer campo para simular outra "
+        "triagem; datas futuras estão limitadas aos 30 dias após o snapshot."
+    )
+    resultado_triagem = modelo_risco.prever(
+        mapa_prioridades[prioridade_rotulo], produto_sel, categoria_sel, grupo_sel, momento_triagem
+    )
+    prob = float(resultado_triagem["probabilidade"])
+    faixa = str(resultado_triagem["faixa"])
+    classe_css = {"Alto": "high", "Moderado": "medium", "Baixo": "low"}[faixa]
+    texto_fila = {
+        "Alto": "Enviar para a fila dourada e validar capacidade, categoria e runbook antes do primeiro handoff.",
+        "Moderado": "Manter monitoramento reforçado e revisar o incidente se houver troca de grupo ou ausência de categorização.",
+        "Baixo": "Seguir o fluxo padrão, preservando os guardrails de P1/P2 e o acompanhamento do relógio de OLA.",
+    }[faixa]
+    st.markdown(
+        f"""<div class="risk-panel {classe_css}">
+        <div class="label">Risco calibrado de violação · faixa {faixa}</div>
+        <div class="value">{fmt_pct(prob, 1)}</div>
+        <div class="copy">{texto_fila}</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("Risco médio no holdout", fmt_pct(metricas_risco["prevalencia"], 1))
+    r2.metric("Corte da fila alta", fmt_pct(modelo_risco.limiar_alto, 1))
+    r3.metric("Lift da fila alta", f"{fmt_num(metricas_risco['lift_fila_alta'], 2)}×")
+    r4.metric("ROC-AUC temporal", fmt_num(metricas_risco["ROC_AUC"], 3))
+    st.progress(min(max(prob, 0.0), 1.0), text="Posição do score na escala probabilística")
+
+    st.subheader("Evidências históricas do perfil informado")
+    evidencias = []
+    for coluna, valor, dimensao_exibida, valor_exibido in [
+        ("Prioridade_Cod", mapa_prioridades[prioridade_rotulo], "Prioridade", prioridade_rotulo),
+        ("Produto", produto_sel, "Produto", produto_sel),
+        ("Categoria", categoria_sel, "Categoria", categoria_sel),
+        ("Grupo designado", grupo_sel, "Grupo designado", grupo_sel),
+    ]:
+        n, v, taxa = evidencia_perfil(df, coluna, valor)
+        evidencias.append([dimensao_exibida, valor_exibido, n, v, taxa])
+    evidencias_df = pd.DataFrame(
+        evidencias, columns=["Dimensão", "Valor", "Elegíveis históricos", "Violações", "Taxa observada"]
+    )
+    evidencias_df["Taxa observada"] = evidencias_df["Taxa observada"].map(lambda v: fmt_pct(v, 1))
+    st.dataframe(evidencias_df, width="stretch", hide_index=True)
+    st.caption(
+        "As taxas da tabela são descritivas e não são a probabilidade do modelo. O score combina os sinais e foi calibrado "
+        "em outubro/novembro de 2025, com teste final apenas em dezembro."
+    )
+
+    acao = pd.DataFrame(
+        [
+            ["Classificação", faixa, f"Risco calibrado de {fmt_pct(prob, 1)}"],
+            ["Primeiro passo", texto_fila, "Regra operacional sugerida pelo app"],
+            ["Guardrail", "Não usar o score como decisão automática ou atribuição de culpa", "Modelo de apoio à triagem"],
+        ],
+        columns=["Etapa", "Ação", "Evidência"],
+    )
+    st.download_button(
+        "Baixar ficha de triagem (.csv)",
+        data=acao.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"triagem_ola_{momento_triagem:%Y%m%d_%H%M}.csv",
+        mime="text/csv",
+    )
+    with st.expander("Como esta predição foi validada"):
+        st.markdown(
+            f"""
+- Treino: incidentes elegíveis anteriores a outubro de 2025.
+- Seleção e calibração: outubro e novembro de 2025.
+- Holdout final: {metricas_risco['n_holdout']:.0f} incidentes de dezembro, com {metricas_risco['n_violacoes_holdout']:.0f} violações.
+- A fila alta aplicou o corte definido antes do holdout, revisou {fmt_pct(metricas_risco['taxa_revisada'], 1)} dos casos e capturou {fmt_pct(metricas_risco['captura_violacoes'], 1)} das violações.
+- Nenhuma feature usa duração, resolução, encerramento ou o próprio indicador de OLA.
+"""
+        )
 
 
 elif pagina == "Modelo & previsão":
@@ -424,9 +643,59 @@ elif pagina == "Modelo & previsão":
 """
         )
 
+    st.markdown("---")
+    st.subheader("Modelo de risco de OLA na abertura")
+    st.caption(
+        f"Teste fora da amostra: {modelo_risco.inicio_holdout:%d/%m/%Y} a {modelo_risco.fim_holdout:%d/%m/%Y}. "
+        "O alvo é violação dentro do universo elegível; nenhuma variável posterior à abertura entra no modelo."
+    )
+    mr1, mr2, mr3, mr4 = st.columns(4)
+    mr1.metric("ROC-AUC", fmt_num(metricas_risco["ROC_AUC"], 3))
+    mr2.metric("PR-AUC", fmt_num(metricas_risco["PR_AUC"], 3), f"base {fmt_num(metricas_risco['prevalencia'], 3)}", delta_color="off")
+    mr3.metric("Captura na fila alta", fmt_pct(metricas_risco["captura_violacoes"], 1))
+    mr4.metric("Casos revisados", fmt_pct(metricas_risco["taxa_revisada"], 1), f"lift {fmt_num(metricas_risco['lift_fila_alta'], 2)}×", delta_color="off")
+    vm1, vm2 = st.columns(2)
+    with vm1:
+        st.markdown("#### Calibração por faixa de score")
+        calibracao = modelo_risco.calibracao
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=calibracao["decil"], y=calibracao["taxa_observada"], name="Taxa observada",
+            mode="lines+markers", line=dict(color=NAVY, width=2.5),
+        ))
+        fig.add_trace(go.Scatter(
+            x=calibracao["decil"], y=calibracao["risco_previsto"], name="Risco previsto",
+            mode="lines+markers", line=dict(color=ORANGE, width=2, dash="dot"),
+        ))
+        fig.update_yaxes(tickformat=".0%")
+        fig.update_xaxes(dtick=1, title="Faixa crescente de risco")
+        st.plotly_chart(estilizar_figura(fig, 370), width="stretch")
+    with vm2:
+        st.markdown("#### Variáveis com maior poder de separação")
+        imp = modelo_risco.importancias.sort_values("queda_pr_auc")
+        fig = px.bar(
+            imp, x="queda_pr_auc", y="variavel", orientation="h",
+            color_discrete_sequence=[TEAL],
+            labels={"queda_pr_auc": "Queda de PR-AUC ao embaralhar", "variavel": ""},
+        )
+        st.plotly_chart(estilizar_figura(fig, 370, legenda=False), width="stretch")
+    with st.expander("Benchmark de seleção do classificador"):
+        bench_risco = modelo_risco.benchmark_validacao.copy()
+        bench_risco["ROC_AUC"] = bench_risco["ROC_AUC"].map(lambda v: fmt_num(v, 3))
+        bench_risco["PR_AUC"] = bench_risco["PR_AUC"].map(lambda v: fmt_num(v, 3))
+        bench_risco["Brier"] = bench_risco["Brier"].map(lambda v: fmt_num(v, 3))
+        bench_risco = bench_risco.drop(columns="peso_extra_trees").rename(
+            columns={"modelo": "Candidato", "ROC_AUC": "ROC-AUC", "PR_AUC": "PR-AUC"}
+        )
+        st.dataframe(bench_risco, width="stretch", hide_index=True)
+        st.caption(
+            "O peso 50/50 foi escolhido pela maior PR-AUC em outubro/novembro. O Platt scaling foi ajustado nessa mesma "
+            "janela e aplicado sem reajuste ao holdout de dezembro."
+        )
 
-elif pagina == "Risco de OLA":
-    cabecalho("Risco de OLA", "Priorização combina escala e taxa, sempre dentro do mesmo universo elegível ao KPI.", "Fila dourada")
+
+elif pagina == "Diagnóstico de OLA":
+    cabecalho("Diagnóstico de OLA", "Priorização combina escala, taxa e recorrência para indicar onde investigar primeiro.", "Causas e fila dourada")
     k1, k2 = st.columns(2)
     k1.metric("Elegíveis ao KPI", fmt_int(len(elegiveis)))
     k2.metric("Violações elegíveis", fmt_int(total_violacoes_kpi))
@@ -460,14 +729,187 @@ elif pagina == "Risco de OLA":
         st.dataframe(saida.head(20), width="stretch", hide_index=True)
         st.caption("Escala crítica = volume acima da mediana do recorte e taxa acima da taxa geral. Exceção crítica = taxa alta com volume abaixo da mediana. O corte de amostra evita destacar taxas extremas baseadas em poucos casos.")
 
+    st.markdown("---")
+    st.subheader("Causas combinadas e fila de investigação")
+    st.caption(
+        "O score transparente combina 50% escala de violações, 30% taxa e 20% recorrência nos 30 dias finais da base. "
+        "Ele prioriza investigação; não afirma causalidade."
+    )
+    combinacoes = {
+        "Categoria × Produto": ("Categoria", "Produto"),
+        "Categoria × Grupo": ("Categoria", "Grupo designado"),
+        "Produto × Grupo": ("Produto", "Grupo designado"),
+    }
+    cc1, cc2, cc3 = st.columns([1.4, 1, 1])
+    with cc1:
+        cruzamento_label = st.selectbox("Cruzamento", list(combinacoes))
+    with cc2:
+        minimo_cruzamento = st.slider("Amostra mínima por combinação", 10, 100, 20, 5)
+    with cc3:
+        incluir_ausentes = st.toggle("Incluir não informado", value=False)
+    dim_a, dim_b = combinacoes[cruzamento_label]
+    causas = ranking_cruzamentos(df, dim_a, dim_b, minimo_cruzamento, incluir_ausentes)
+    if causas.empty:
+        st.warning("Nenhuma combinação atende ao volume mínimo escolhido.")
+    else:
+        top_causas = causas.head(12).sort_values("score_prioridade")
+        fig = px.bar(
+            top_causas,
+            x="score_prioridade",
+            y="causa",
+            orientation="h",
+            text="violacoes",
+            color_discrete_sequence=[ORANGE],
+            labels={"score_prioridade": "Score de prioridade (0–100)", "causa": "", "violacoes": "Violações"},
+        )
+        fig.update_traces(texttemplate="%{text} violações", textposition="outside", cliponaxis=False)
+        fig.update_xaxes(range=[0, 108])
+        st.plotly_chart(estilizar_figura(fig, 455, legenda=False), width="stretch")
 
-elif pagina == "Plano de ação":
-    cabecalho("Plano de ação", "Do sinal analítico à decisão, com horizonte, evidência e limite explícitos.", "Recomendações orientadas por dados")
+        opcoes_causa = causas.head(30)["causa"].tolist()
+        causa_escolhida = st.selectbox("Abrir diagnóstico", opcoes_causa)
+        linha = causas[causas["causa"] == causa_escolhida].iloc[0]
+        valor_a, valor_b = linha[dim_a], linha[dim_b]
+        base_diag = elegiveis.copy()
+        filtro_a = base_diag[dim_a].fillna("Não informado").astype(str).eq(str(valor_a))
+        filtro_b = base_diag[dim_b].fillna("Não informado").astype(str).eq(str(valor_b))
+        detalhe = base_diag[filtro_a & filtro_b].copy()
+        mensal_diag = (
+            detalhe.groupby(detalhe["Aberto"].dt.to_period("M"))["OLA_Violado_KPI_Regra"]
+            .agg(["count", "sum", "mean"])
+            .tail(12)
+            .reset_index()
+        )
+        mensal_diag["mes"] = mensal_diag["Aberto"].dt.to_timestamp()
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Elegíveis", fmt_int(linha["elegiveis"]))
+        d2.metric("Violações", fmt_int(linha["violacoes"]))
+        d3.metric("Taxa", fmt_pct(linha["taxa_violacao"], 1), f"{fmt_num(linha['lift_taxa'], 1)}× a média", delta_color="off")
+        d4.metric("Excesso mediano", f"{fmt_num(linha['excesso_horas_mediano'], 1)} h", "entre violações", delta_color="off")
+        e1, e2 = st.columns([1.5, 1])
+        with e1:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=mensal_diag["mes"], y=mensal_diag["count"], name="Elegíveis", marker_color="#C8D3DF"))
+            fig.add_trace(go.Bar(x=mensal_diag["mes"], y=mensal_diag["sum"], name="Violações", marker_color=ORANGE))
+            fig.update_layout(barmode="overlay")
+            st.plotly_chart(estilizar_figura(fig, 350), width="stretch")
+        with e2:
+            principal_grupo = detalhe["Grupo designado"].mode().iloc[0] if not detalhe.empty else "—"
+            card_acao(
+                "Ação sugerida",
+                f"Abrir runbook para {causa_escolhida}",
+                f"Começar pelo grupo mais recorrente ({principal_grupo}), revisar os {fmt_int(linha['violacoes_30d'])} casos dos 30 dias finais e validar mudança de causa antes de escalar.",
+                "red" if linha["lift_taxa"] >= 1.5 else "gold",
+            )
+            card_acao(
+                "Critério de saída",
+                "Reavaliar após duas janelas",
+                "Fechar a ação somente se a taxa cair sem deslocar violações para outra categoria, produto ou grupo.",
+                "teal",
+            )
+
+        exportar = causas[[dim_a, dim_b, "score_prioridade", "elegiveis", "violacoes", "taxa_violacao", "violacoes_30d", "excesso_horas_mediano"]].copy()
+        st.download_button(
+            "Baixar fila priorizada (.csv)",
+            data=exportar.to_csv(index=False).encode("utf-8-sig"),
+            file_name="fila_investigacao_ola.csv",
+            mime="text/csv",
+        )
+
+
+elif pagina == "Capacidade & ação":
+    cabecalho("Capacidade & plano de ação", "Converta a faixa prevista em necessidade operacional usando premissas informadas por você.", "Simulador de decisão")
     prod, cat, grupo = ranking_ola(df, "Produto", 30), ranking_ola(df, "Categoria", 30), ranking_ola(df, "Grupo designado", 30)
     cat_crit = cat[cat["quadrante"] == "Escala crítica"].iloc[0]
     prod_crit = prod[prod["quadrante"] == "Escala crítica"].iloc[0]
     grupo_crit = grupo[grupo["quadrante"] == "Escala crítica"].iloc[0]
-    curto, medio, governanca = st.tabs(["Próximas 24h", "Próximos 7–30 dias", "Cenário de cobertura"])
+    capacidade_tab, curto, medio, governanca = st.tabs(
+        ["Dimensionamento D+1", "Próximas 24h", "Próximos 7–30 dias", "Cenário de cobertura"]
+    )
+    with capacidade_tab:
+        st.markdown("#### Premissas operacionais")
+        st.caption(
+            "A previsão de volume vem do modelo. Produtividade, ocupação e equipe disponível são premissas editáveis, "
+            "pois esses dados não existem no dataset da Locaweb."
+        )
+        p1, p2, p3, p4 = st.columns(4)
+        with p1:
+            produtividade = st.number_input(
+                "Incidentes por analista/dia", min_value=1, max_value=100, value=30, step=1
+            )
+        with p2:
+            ocupacao = st.slider("Ocupação planejada", 50, 95, 80, 5)
+        with p3:
+            indisponibilidade = st.slider("Folga de indisponibilidade", 0, 35, 10, 5)
+        with p4:
+            equipe_atual = st.number_input("Analistas disponíveis", min_value=1, max_value=200, value=28, step=1)
+
+        capacidade_efetiva = produtividade * (ocupacao / 100) * (1 - indisponibilidade / 100)
+        cenarios_volume = {
+            "Faixa inferior": previsao_d1["limite_inferior_80"],
+            "Ponto central": previsao_d1["ponto"],
+            "Faixa superior": previsao_d1["limite_superior_80"],
+        }
+        dimensionamento = pd.DataFrame(
+            [
+                [nome, int(round(volume)), int(np.ceil(volume / max(1e-9, capacidade_efetiva)))]
+                for nome, volume in cenarios_volume.items()
+            ],
+            columns=["Cenário", "Volume previsto", "Analistas necessários"],
+        )
+        dimensionamento["Equipe disponível"] = int(equipe_atual)
+        dimensionamento["Gap"] = dimensionamento["Analistas necessários"] - int(equipe_atual)
+        centro = dimensionamento.iloc[1]
+        alto = dimensionamento.iloc[2]
+        dc1, dc2, dc3, dc4 = st.columns(4)
+        dc1.metric("Capacidade efetiva", f"{fmt_num(capacidade_efetiva, 1)}", "incidentes/analista", delta_color="off")
+        dc2.metric("Necessário · ponto", fmt_int(centro["Analistas necessários"]))
+        dc3.metric("Necessário · faixa alta", fmt_int(alto["Analistas necessários"]))
+        dc4.metric("Gap · faixa alta", f"{int(alto['Gap']):+d}", "positivo = falta", delta_color="off")
+
+        visual_cap = dimensionamento.melt(
+            id_vars="Cenário",
+            value_vars=["Analistas necessários", "Equipe disponível"],
+            var_name="Série",
+            value_name="Analistas",
+        )
+        fig = px.bar(
+            visual_cap,
+            x="Cenário",
+            y="Analistas",
+            color="Série",
+            barmode="group",
+            text_auto=True,
+            color_discrete_map={"Analistas necessários": ORANGE, "Equipe disponível": NAVY},
+            labels={"Analistas": "Pessoas por dia"},
+        )
+        st.plotly_chart(estilizar_figura(fig, 365), width="stretch")
+
+        if alto["Gap"] > 0:
+            card_acao(
+                "Decisão · faixa superior",
+                f"Criar contingência para {int(alto['Gap'])} analistas-equivalentes",
+                "Opções: reforço temporário, redistribuição entre grupos ou redução do backlog não crítico. "
+                "A decisão final deve considerar habilidades e turnos, ausentes na base.",
+                "red",
+            )
+        else:
+            card_acao(
+                "Decisão · faixa superior",
+                f"Folga estimada de {abs(int(alto['Gap']))} analistas-equivalentes",
+                "Preservar parte da folga para P1/P2 e confirmar se a produtividade informada inclui incidentes automáticos.",
+                "teal",
+            )
+        st.download_button(
+            "Baixar plano de capacidade (.csv)",
+            data=dimensionamento.to_csv(index=False).encode("utf-8-sig"),
+            file_name="plano_capacidade_d1.csv",
+            mime="text/csv",
+        )
+        st.info(
+            "CENÁRIO, não previsão de headcount: mudar qualquer premissa recalcula a necessidade. "
+            "A estimativa de volume permanece fixa no snapshot e no modelo validado."
+        )
     with curto:
         c1, c2 = st.columns(2)
         with c1:
@@ -501,7 +943,13 @@ elif pagina == "Plano de ação":
             ], columns=["Horizonte", "Frente", "Ação", "Evidência"],
         )
         st.dataframe(plano, width="stretch", hide_index=True)
-        st.warning("A base não contém produtividade por analista, custo por incidente nem tempo médio de atendimento confiável por recurso. Por isso o app não inventa headcount, economia financeira ou probabilidade individual de falha.")
+        st.download_button(
+            "Baixar plano de ação (.csv)",
+            data=plano.to_csv(index=False).encode("utf-8-sig"),
+            file_name="plano_acao_7_30_dias.csv",
+            mime="text/csv",
+        )
+        st.warning("A base não contém produtividade por analista nem custo por incidente. O dimensionamento usa premissas declaradas pelo operador e não inventa economia financeira.")
     with governanca:
         capacidade = st.slider("Quantos produtos cabem na revisão preventiva?", 1, 10, 5)
         selecionados = prod.head(capacidade).copy()
@@ -564,12 +1012,33 @@ else:
         data_fim = st.date_input("Até", df["Aberto"].max().date(), min_value=df["Aberto"].min().date(), max_value=df["Aberto"].max().date())
     with f3:
         prioridades = st.multiselect("Prioridade", sorted(df["Prioridade"].dropna().unique()))
+    f4, f5, f6 = st.columns(3)
+    with f4:
+        grupos_filtro = st.multiselect("Grupo designado", sorted(df["Grupo designado"].dropna().astype(str).unique()))
+    with f5:
+        produtos_filtro = st.multiselect("Produto", sorted(df["Produto"].dropna().astype(str).unique()))
+    with f6:
+        universo_filtro = st.selectbox("Universo", ["Todos", "Elegíveis ao KPI", "Violações elegíveis"])
     filtrado = df[(df["Aberto"].dt.date >= data_inicio) & (df["Aberto"].dt.date <= data_fim)]
     if prioridades:
         filtrado = filtrado[filtrado["Prioridade"].isin(prioridades)]
+    if grupos_filtro:
+        filtrado = filtrado[filtrado["Grupo designado"].isin(grupos_filtro)]
+    if produtos_filtro:
+        filtrado = filtrado[filtrado["Produto"].isin(produtos_filtro)]
+    if universo_filtro == "Elegíveis ao KPI":
+        filtrado = filtrado[filtrado["Elegivel_KPI_Regra"]]
+    elif universo_filtro == "Violações elegíveis":
+        filtrado = filtrado[filtrado["OLA_Violado_KPI_Regra"]]
     cols = ["Número", "Aberto", "Prioridade", "Produto", "Categoria", "Grupo designado", "Duracao_Horas", "Status_Exibicao", "Elegivel_KPI_Regra", "OLA_Violado_KPI_Regra"]
     st.dataframe(filtrado.sort_values("Aberto", ascending=False)[cols].head(500), width="stretch", hide_index=True)
-    st.caption(f"Mostrando até 500 de {fmt_int(len(filtrado))} registros no filtro. A exportação integral permanece no arquivo-fonte do projeto.")
+    st.caption(f"Mostrando até 500 de {fmt_int(len(filtrado))} registros no filtro.")
+    st.download_button(
+        "Baixar recorte completo (.csv)",
+        data=filtrado.sort_values("Aberto", ascending=False)[cols].to_csv(index=False).encode("utf-8-sig"),
+        file_name="incidentes_filtrados_visionops.csv",
+        mime="text/csv",
+    )
     st.markdown(
         "<div class='source-box'><b>Linhas de evidência:</b> LW-DATASET.xlsx → tratamento determinístico → dataset_limpo.parquet → agregação diária → modelo. As recomendações são derivadas dos resultados exibidos; não há chamadas a IA generativa nem métricas sintéticas em tempo de execução.</div>",
         unsafe_allow_html=True,
