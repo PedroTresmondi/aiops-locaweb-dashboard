@@ -306,6 +306,10 @@ tr:hover td { background: #132237; }
 .decision-panel.alerta { border-color: #6b3a2a; background: radial-gradient(circle at 88% 4%, rgba(180,80,48,.2), transparent 35%), linear-gradient(145deg,#2a1a13,#150b08); }
 .decision-panel.alerta h3 { color: #ffb9a3; }
 
+.advanced-panel { border-left: 3px solid #7c5ce5; }
+.advanced-panel .stats-grid { margin-bottom: 16px; }
+.advanced-panel .content-grid.equal { gap: 16px; }
+
 @media (max-width: 1120px) {
   .stats-grid { grid-template-columns: repeat(2,1fr); }
   .quality-grid { grid-template-columns: repeat(2,1fr); }

@@ -148,3 +148,15 @@ export type Segmentation = {
   entidades: { entidade: string; cluster: number; rotulo: string; incidentesTotal: number; incidentesKpi: number; olaViolados: number; taxaViolacao: number; duracaoMediaH: number }[]
 }
 
+export type AdvancedModel = {
+  janelaBacktest: { inicio: string; fim: string; descricao: string }
+  metricas: {
+    horizonte: string; modelo: string; nPontos: number; mae: number; rmse: number; wape: number; r2: number
+    maeBaseline: number; maeOperacional: number; ganhoVsBaseline: number; ganhoVsOperacional: number
+  }[]
+  previsoes: { horizonte: string; dataAlvo: string; ponto: number; inferior: number; superior: number; linear: number; gbmPoisson: number; alvoFeriado: boolean }[]
+  backtest: { dataAlvo: string; horizonte: string; real: number; baseline: number; operacional: number; avancado: number }[]
+  importancias: { horizonte: string; variavel: string; importancia: number; eFeriado: boolean }[]
+  feriados: { data: string; nome: string }[]
+}
+

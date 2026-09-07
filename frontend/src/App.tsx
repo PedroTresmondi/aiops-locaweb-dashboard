@@ -10,7 +10,7 @@ import {
 } from 'recharts'
 import { api } from './api'
 import type {
-  Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
+  AdvancedModel, Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
   Perfil, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
 } from './types'
 
@@ -235,6 +235,44 @@ function CapacityPage() {
   </>
 }
 
+function AdvancedModelPanel() {
+  const [data, setData] = useState<AdvancedModel>()
+  const [horizonte, setHorizonte] = useState('D+1')
+  const [error, setError] = useState('')
+  useEffect(() => { api<AdvancedModel>('/api/models/advanced').then(setData).catch(e => setError(e.message)) }, [])
+  if (error) return <Panel title="Modelo avançado de previsão (extensão)" subtitle="Erro"><ErrorState message={error}/></Panel>
+  if (!data) return <Panel title="Modelo avançado de previsão (extensão)" subtitle="Rodando backtest rolling-origin"><Loading/></Panel>
+  const m = data.metricas.find(x => x.horizonte === horizonte)!
+  const bt = data.backtest.filter(x => x.horizonte === horizonte)
+  const imp = data.importancias.filter(x => x.horizonte === horizonte)
+  const prev = data.previsoes.find(x => x.horizonte === horizonte)!
+  return <Panel title="Modelo avançado de previsão (extensão Sprint 4)" subtitle={`${data.janelaBacktest.descricao} · ${data.janelaBacktest.inicio} a ${data.janelaBacktest.fim} · ${m.nPontos} previsões diárias`}
+    className="advanced-panel">
+    <div className="segmented" style={{ marginBottom: 14 }}>{['D+1', 'D+7'].map(h => <button key={h} className={horizonte === h ? 'active' : ''} onClick={() => setHorizonte(h)}>{h}</button>)}</div>
+    <div className="stats-grid">
+      <StatCard icon={<BrainCircuit/>} label={`MAE ${horizonte} · backtest`} value={dec.format(m.mae)} detail={`${m.nPontos} previsões · WAPE ${pct(m.wape)}`} tone="violet"/>
+      <StatCard icon={<TrendingUp/>} label="vs. baseline linear" value={pct(m.ganhoVsBaseline)} detail={`MAE baseline: ${dec.format(m.maeBaseline)}`} tone="teal"/>
+      <StatCard icon={<Target/>} label="vs. ensemble operacional" value={pct(m.ganhoVsOperacional)} detail={`MAE operacional: ${dec.format(m.maeOperacional)}`} tone={m.ganhoVsOperacional >= 0 ? 'teal' : 'orange'}/>
+      <StatCard icon={<Clock3/>} label={`Previsão ${horizonte} · ${date(prev.dataAlvo)}`} value={int.format(prev.ponto)} detail={`${int.format(prev.inferior)}–${int.format(prev.superior)}${prev.alvoFeriado ? ' · alvo é feriado' : ''}`} tone="orange"/>
+    </div>
+    <div className="content-grid equal">
+      <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={bt} margin={{ top: 15, right: 15, left: -8 }}>
+        <CartesianGrid vertical={false} stroke="#223147"/><XAxis dataKey="dataAlvo" tickFormatter={date} minTickGap={30} tick={{ fontSize: 10 }}/><YAxis tick={{ fontSize: 10 }}/><Tooltip labelFormatter={l => date(String(l))} formatter={v => int.format(Number(v))}/><Legend/>
+        <Line dataKey="real" name="Observado" stroke="#e6e9ef" strokeWidth={2} dot={false}/>
+        <Line dataKey="baseline" name="Baseline linear" stroke="#8a97a8" strokeWidth={1.5} strokeDasharray="4 3" dot={false}/>
+        <Line dataKey="avancado" name="Avançado" stroke="#a993ff" strokeWidth={2.5} dot={false}/>
+      </ComposedChart></ResponsiveContainer></div>
+      <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><BarChart data={imp} layout="vertical" margin={{ left: 10, right: 15 }}>
+        <CartesianGrid horizontal={false} stroke="#223147"/><XAxis type="number" tick={{ fontSize: 10 }}/><YAxis type="category" dataKey="variavel" width={140} tick={{ fontSize: 10 }}/><Tooltip formatter={v => dec.format(Number(v))}/>
+        <Bar dataKey="importancia" name="Impacto no MAE (permutação)" radius={[0, 6, 6, 0]}>{imp.map(i => <Cell key={i.variavel} fill={i.eFeriado ? '#ef6236' : '#274c77'}/>)}</Bar>
+      </BarChart></ResponsiveContainer></div>
+    </div>
+    <div className="method-note"><ShieldCheck/><p>
+      <strong>Extensão em validação — não substitui o ensemble operacional publicado.</strong> Adiciona: feriados nacionais do Brasil (fatos de calendário; {data.feriados.length} no período), perda de Poisson (respeita contagem), pesos por recência e um backtest de origem móvel com {m.nPontos} previsões diárias em vez do holdout único de dezembro. Ganha do baseline linear e empata com o ensemble operacional; o diferencial é antecipar a queda em feriados — a previsão de 01/01 cai para {int.format(data.previsoes.find(x => x.horizonte === 'D+1')!.ponto)} (alvo é feriado).
+    </p></div>
+  </Panel>
+}
+
 function ModelsPage() {
   const [data, setData] = useState<Models>()
   const [error, setError] = useState('')
@@ -261,6 +299,7 @@ function ModelsPage() {
       <div className="model-table"><div className="table-row table-head"><span>Horizonte</span><span>Modelo selecionado</span><span>MAE</span><span>WAPE</span><span>Ganho</span></div>{data.volume.map(row => <div className="table-row" key={row.horizonte}><strong>{row.horizonte}</strong><span>{row.modelo}</span><span>{dec.format(row.mae)}</span><span>{pct(row.wape)}</span><span className={row.ganho >= 0 ? 'positive' : 'negative'}>{pct(row.ganho)}</span></div>)}</div>
       <div className="method-note"><ShieldCheck/><p><strong>Sem vazamento de alvo.</strong> O classificador utiliza apenas prioridade, produto, categoria, grupo e contexto temporal disponíveis na abertura. Dezembro permaneceu intocado até o teste final.</p></div>
     </Panel>
+    <AdvancedModelPanel/>
   </>
 }
 

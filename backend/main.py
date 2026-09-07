@@ -349,6 +349,74 @@ def models() -> dict:
     }
 
 
+@app.get("/api/models/advanced")
+def modelo_avancado() -> dict:
+    avancado = volume_model().avancado
+    metricas = avancado["metricas"]
+    backtest = avancado["backtest"]
+    importancias = avancado["importancias"]
+    janela = avancado["janela_backtest"]
+    return {
+        "janelaBacktest": {
+            "inicio": pd.Timestamp(janela["inicio"]).date().isoformat(),
+            "fim": pd.Timestamp(janela["fim"]).date().isoformat(),
+            "descricao": "Validação por origem móvel (rolling-origin) — refit a cada 14 dias",
+        },
+        "metricas": [
+            {
+                "horizonte": row.horizonte,
+                "modelo": row.modelo,
+                "nPontos": int(row.n_pontos),
+                "mae": round(float(row.bt_MAE), 1),
+                "rmse": round(float(row.bt_RMSE), 1),
+                "wape": float(row.bt_WAPE),
+                "r2": round(float(row.bt_R2), 3),
+                "maeBaseline": round(float(row.baseline_bt_MAE), 1),
+                "maeOperacional": round(float(row.operacional_bt_MAE), 1),
+                "ganhoVsBaseline": float(row.ganho_vs_baseline),
+                "ganhoVsOperacional": float(row.ganho_vs_operacional),
+            }
+            for row in metricas.itertuples()
+        ],
+        "previsoes": [
+            {
+                "horizonte": horizonte,
+                "dataAlvo": pd.Timestamp(dados["data_alvo"]).date().isoformat(),
+                "ponto": round(float(dados["ponto"])),
+                "inferior": round(float(dados["limite_inferior_80"])),
+                "superior": round(float(dados["limite_superior_80"])),
+                "linear": round(float(dados["linear"])),
+                "gbmPoisson": round(float(dados["gbm_poisson"])),
+                "alvoFeriado": bool(dados["alvo_feriado"]),
+            }
+            for horizonte, dados in avancado["previsoes"].items()
+        ],
+        "backtest": [
+            {
+                "dataAlvo": pd.Timestamp(row.data_alvo).date().isoformat(),
+                "horizonte": row.horizonte,
+                "real": round(float(row.real)),
+                "baseline": round(float(row.linear)),
+                "operacional": round(float(row.operacional)),
+                "avancado": round(float(row.avancado)),
+            }
+            for row in backtest.itertuples()
+        ],
+        "importancias": [
+            {
+                "horizonte": row.horizonte,
+                "variavel": row.variavel,
+                "importancia": round(float(row.importancia), 2),
+                "eFeriado": bool(row.e_feriado),
+            }
+            for row in importancias.itertuples()
+        ],
+        "feriados": [
+            {"data": row.data, "nome": row.nome} for row in avancado["feriados"].itertuples()
+        ],
+    }
+
+
 @app.get("/api/audit")
 def audit(limit: int = Query(default=100, ge=10, le=500)) -> dict:
     df = load_data()

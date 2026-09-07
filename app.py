@@ -203,7 +203,7 @@ def carregar_dados() -> pd.DataFrame:
 
 @st.cache_resource(show_spinner="Recalculando modelo e validação temporal…")
 def carregar_modelagem() -> object:
-    return executar_pipeline(carregar_dados())
+    return executar_pipeline(carregar_dados(), incluir_avancado=False)
 
 
 @st.cache_resource(show_spinner="Validando modelo de risco de OLA…")

@@ -112,8 +112,34 @@ alvos já conhecidos — estimam:
 - **dia +7 (07/01/2026): 970**, faixa empírica de **799 a 1.233** incidentes.
 
 Essas datas são consequência do limite da base, não previsões ao vivo para a data atual.
-`Dia +7` significa o volume daquele dia, e não a soma dos próximos sete dias. O modelo não
-possui indicador de feriado, limitação relevante para a estimativa de 01/01.
+`Dia +7` significa o volume daquele dia, e não a soma dos próximos sete dias.
+
+## Modelo avançado de previsão (extensão)
+
+Extensão da Sprint 4 que ataca a limitação registrada acima (sem indicador de feriado) e
+reforça a validação. **Não substitui** o ensemble operacional publicado — é apresentada como
+próxima evolução, validada da mesma forma auditável.
+
+- **Feriados nacionais do Brasil** (fixos + móveis via cálculo da Páscoa) como features do
+  dia-base e do dia-alvo. São fatos de calendário, não dados sintéticos.
+- **Perda de Poisson** no componente de árvore (`HistGradientBoostingRegressor(loss="poisson")`):
+  respeita a natureza de contagem e nunca gera valor negativo.
+- **Pesos por recência** (decaimento exponencial, meia-vida de 90 dias): o regime pós-setembro
+  pesa mais sem descartar o histórico.
+- **Validação por origem móvel (rolling-origin):** refit a cada 14 dias entre outubro e
+  dezembro, **59 previsões diárias por horizonte** em vez do holdout único de dezembro.
+
+| Horizonte | MAE avançado | MAE baseline linear | MAE ensemble operacional | Ganho vs. baseline |
+|---|---:|---:|---:|---:|
+| D+1 | 121,9 | 125,2 | 115,7 | +2,6% |
+| Dia +7 | 133,7 | 138,4 | 135,3 | +3,3% |
+
+Leitura honesta: o modelo avançado **ganha do baseline linear e empata com o ensemble
+operacional** (que foi calibrado exatamente nessa janela). O diferencial real é antecipar a
+queda em feriados — a previsão para **01/01/2026 (feriado) cai para 885** contra 914 do
+ensemble. É exatamente a data que o modelo da Sprint 3 errava por não ter calendário.
+
+Exposto em `GET /api/models/advanced` e na página **Modelos & validação**.
 
 ## Modelo de risco de OLA
 
@@ -148,14 +174,15 @@ aiops-locaweb-dashboard/
 │   ├── requirements.txt      # dependências da API
 │   └── requirements-azure.txt # extras só para o deploy no Azure (MySQL + telemetria)
 ├── app.py                    # versão Streamlit de contingência
-├── model_pipeline.py         # features, validação, benchmark e treino final
+├── model_pipeline.py         # features, validação, benchmark, treino final + modelo avançado (feriados/Poisson/rolling-origin)
 ├── risk_pipeline.py          # classificação e calibração temporal de risco de OLA
 ├── dataset_limpo.parquet     # base tratada e regras auditadas de OLA
 ├── tests/
 │   ├── test_pipeline.py      # testes da previsão de volume
 │   ├── test_risk_pipeline.py # testes da triagem preditiva
 │   ├── test_api.py           # contrato e métricas da API
-│   └── test_sprint4.py       # fila em lote, ações, deriva, otimização, segmentação, legado
+│   ├── test_sprint4.py       # fila em lote, ações, deriva, otimização, segmentação, legado
+│   └── test_advanced_model.py # feriados, Poisson, backtest rolling-origin
 ├── Dockerfile                # build único de frontend + backend (ACR/ACI)
 ├── DEPLOY_AZURE.md           # runbook de publicação no Azure
 ├── render.yaml               # deploy alternativo como Web Service
