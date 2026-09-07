@@ -11,6 +11,9 @@ import streamlit as st
 
 from model_pipeline import executar_pipeline
 from risk_pipeline import executar_pipeline_risco
+from backend.monitoring import analisar_deriva
+from backend.optimization import otimizar_alocacao
+from backend.segmentation import DIMENSOES as DIMENSOES_SEGMENTACAO, segmentar
 
 
 BASE = Path(__file__).parent
@@ -343,7 +346,9 @@ with st.sidebar:
             "Fila operacional",
             "Triagem preditiva",
             "Diagnóstico de OLA",
+            "Alocação preventiva",
             "Capacidade & ação",
+            "Monitor de deriva",
             "Modelo & previsão",
             "Auditoria de dados",
         ],
@@ -932,6 +937,117 @@ elif pagina == "Diagnóstico de OLA":
             mime="text/csv",
         )
 
+    st.markdown("---")
+    st.subheader("Segmentação de criticidade (K-Means)")
+    st.caption(
+        "Porta a Seção 17 do notebook de Machine Learning da Sprint 3: agrega a dimensão escolhida, "
+        "aplica log1p nas contagens, padroniza e escolhe K pelo maior Coeficiente de Silhueta entre 2 e 6. "
+        "Os rótulos vêm do modelo, ordenados pela taxa média de violação de cada cluster — não é classificação manual."
+    )
+    dim_seg = st.selectbox("Segmentar por", list(DIMENSOES_SEGMENTACAO), key="dim_segmentacao")
+    try:
+        seg = segmentar(df, dim_seg)
+    except ValueError as erro:
+        st.warning(str(erro))
+    else:
+        clusters_seg = pd.DataFrame(seg["clusters"])
+        critico = clusters_seg.iloc[0]
+        s1, s2, s3 = st.columns(3)
+        s1.metric("K escolhido", seg["kEscolhido"], seg["criterio"], delta_color="off")
+        s2.metric(f"{dim_seg}s no cluster mais crítico", fmt_int(critico["entidades"]))
+        s3.metric("Taxa média do cluster crítico", fmt_pct(float(critico["taxaMedia"]), 1), f"{fmt_int(critico['olaViolados'])} violações-base", delta_color="off")
+        fig = px.bar(
+            clusters_seg, x="rotulo", y="taxaMedia", text="entidades",
+            color_discrete_sequence=[ORANGE],
+            labels={"rotulo": "", "taxaMedia": "Taxa média de violação (OLA-base)", "entidades": f"{dim_seg}s"},
+        )
+        fig.update_traces(texttemplate="%{text} " + dim_seg.lower() + "s", textposition="outside", cliponaxis=False)
+        fig.update_yaxes(tickformat=".0%")
+        st.plotly_chart(estilizar_figura(fig, 360, legenda=False), width="stretch")
+        entidades_seg = pd.DataFrame(seg["entidades"])
+        entidades_seg = entidades_seg[entidades_seg["cluster"] == int(critico["posicao"])]
+        tabela_seg = entidades_seg[["entidade", "incidentesTotal", "incidentesKpi", "olaViolados", "taxaViolacao", "duracaoMediaH"]].copy()
+        tabela_seg.columns = [dim_seg, "Incidentes", "Elegíveis", "Violações-base", "Taxa", "Duração média (h)"]
+        tabela_seg["Taxa"] = tabela_seg["Taxa"].map(lambda v: fmt_pct(float(v), 1))
+        tabela_seg["Duração média (h)"] = tabela_seg["Duração média (h)"].map(lambda v: fmt_num(float(v), 1))
+        st.dataframe(tabela_seg, width="stretch", hide_index=True)
+        st.caption(f"Entidades do cluster mais crítico em {dim_seg}. Taxa sobre a OLA-base (todos os incidentes), não sobre o universo elegível.")
+
+
+elif pagina == "Alocação preventiva":
+    cabecalho(
+        "Alocação preventiva de revisão (D+1)",
+        "Programação Linear Inteira Mista decide quais produtos entram na revisão preventiva, dada a capacidade da operação.",
+        "Otimização prescritiva",
+    )
+    st.markdown(
+        """<div class="context-strip">
+        <span class="pill">OBSERVADO · pesos de risco = histórico de violações por produto</span>
+        <span class="pill pill-model">MODELO · previsão D+1 distribuída pelos pesos</span>
+        <span class="pill pill-alert">DECISÃO · cenário de capacidade, não headcount</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Porta a Seção 18 do notebook de Machine Learning da Sprint 3. O notebook resolve com PuLP/CBC; "
+        "aqui o mesmo modelo é resolvido com scipy.optimize.milp. O volume D+1 vem do ensemble operacional "
+        f"({fmt_int(previsao_d1['ponto'])} incidentes para {previsao_d1['data_alvo']:%d/%m/%Y}); a alocação é prescritiva."
+    )
+    o1, o2 = st.columns(2)
+    with o1:
+        capacidade_milp = st.slider("Produtos que cabem na revisão preventiva", 1, 15, 5)
+    with o2:
+        limite_categoria = st.slider("Limite de produtos por categoria dominante", 1, 6, 2)
+    try:
+        resultado_milp = otimizar_alocacao(
+            df, float(previsao_d1["ponto"]),
+            capacidade=capacidade_milp, limite_por_categoria=limite_categoria,
+        )
+    except ValueError as erro:
+        st.warning(str(erro))
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Produtos priorizados", fmt_int(len(resultado_milp["selecionados"])))
+        m2.metric("Risco D+1 coberto", fmt_pct(resultado_milp["coberturaPct"] / 100, 1), f"{fmt_num(resultado_milp['riscoCoberto'], 1)} de {fmt_num(resultado_milp['riscoTotal'], 1)}", delta_color="off")
+        m3.metric("Preço-sombra da vaga", fmt_num(resultado_milp["precoSombra"], 1), "risco coberto por vaga extra", delta_color="off")
+        m4.metric("Limite por categoria", fmt_int(resultado_milp["limitePorCategoria"]))
+        fila_milp = pd.DataFrame(resultado_milp["fila"])
+        fila_milp["Situação"] = np.where(fila_milp["selecionado"], "Selecionado", "Fora da capacidade")
+        fig = px.bar(
+            fila_milp.head(20).sort_values("cargaEstimadaD1"),
+            x="cargaEstimadaD1", y="produto", orientation="h", color="Situação",
+            color_discrete_map={"Selecionado": ORANGE, "Fora da capacidade": "#C8D3DF"},
+            labels={"cargaEstimadaD1": "Carga estimada de OLA em D+1", "produto": ""},
+        )
+        st.plotly_chart(estilizar_figura(fig, 480), width="stretch")
+        tabela_milp = fila_milp[["produto", "categoriaDominante", "incidentesTotal", "olaViolados", "cargaEstimadaD1", "Situação"]].copy()
+        tabela_milp.columns = ["Produto", "Categoria dominante", "Incidentes", "Violações-base", "Carga D+1", "Situação"]
+        tabela_milp["Carga D+1"] = tabela_milp["Carga D+1"].map(lambda v: fmt_num(float(v), 1))
+        st.dataframe(tabela_milp, width="stretch", hide_index=True)
+        sens = pd.DataFrame(resultado_milp["sensibilidade"])
+        if not sens.empty:
+            fig = px.line(
+                sens, x="capacidade", y="pctDoTotal", markers=True,
+                color_discrete_sequence=[NAVY],
+                labels={"capacidade": "Capacidade (produtos)", "pctDoTotal": "% do risco D+1 coberto"},
+            )
+            fig.add_vline(x=capacidade_milp, line_dash="dot", line_color=ORANGE, annotation_text="capacidade atual")
+            fig.update_yaxes(ticksuffix="%")
+            st.plotly_chart(estilizar_figura(fig, 340, legenda=False), width="stretch")
+        st.download_button(
+            "Baixar alocação priorizada (.csv)",
+            data=tabela_milp.to_csv(index=False).encode("utf-8-sig"),
+            file_name="alocacao_preventiva_d1.csv",
+            mime="text/csv",
+        )
+        card_acao(
+            "Leitura da otimização",
+            f"Com {capacidade_milp} produtos, a revisão preventiva cobre {fmt_pct(resultado_milp['coberturaPct'] / 100, 1)} do risco projetado para D+1",
+            "Os pesos de risco vêm do histórico real de violações por produto; a previsão de volume vem do modelo validado. "
+            "A curva de sensibilidade mostra o retorno decrescente de cada vaga adicional.",
+            "red" if resultado_milp["coberturaPct"] < 50 else "teal",
+        )
+
 
 elif pagina == "Capacidade & ação":
     cabecalho("Capacidade & plano de ação", "Converta a faixa prevista em necessidade operacional usando premissas informadas por você.", "Simulador de decisão")
@@ -1078,6 +1194,72 @@ elif pagina == "Capacidade & ação":
         tabela_cenario["Taxa"] = tabela_cenario["Taxa"].map(lambda v: fmt_pct(v, 1))
         st.dataframe(tabela_cenario, width="stretch", hide_index=True)
         st.caption("CENÁRIO, não previsão: mostra qual parcela das violações elegíveis históricas pertence aos N produtos selecionados. Não significa que todas seriam evitadas.")
+
+
+elif pagina == "Monitor de deriva":
+    cabecalho(
+        "Monitor de deriva de dados",
+        "Compara a janela de treino do classificador de risco com os 30 dias finais do snapshot (Population Stability Index).",
+        "Governança de modelo",
+    )
+    try:
+        deriva = analisar_deriva(df)
+    except ValueError as erro:
+        st.warning(str(erro))
+    else:
+        ref, rec = deriva["janelaReferencia"], deriva["janelaRecente"]
+        st.markdown(
+            f"""<div class="context-strip">
+            <span class="pill">REFERÊNCIA · {ref['inicio']} a {ref['fim']} · {fmt_int(ref['incidentes'])} elegíveis</span>
+            <span class="pill pill-model">RECENTE · {rec['inicio']} a {rec['fim']} · {fmt_int(rec['incidentes'])} elegíveis</span>
+            <span class="pill pill-alert">{'REVALIDAÇÃO RECOMENDADA' if deriva['revalidacaoRecomendada'] else 'SEM GATILHO DE REVALIDAÇÃO'}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        vol, taxa = deriva["volumeMedioDia"], deriva["taxaViolacao"]
+        dd1, dd2, dd3, dd4 = st.columns(4)
+        dd1.metric("Pior PSI", fmt_num(deriva["piorPsi"], 2), "≥ 0,20 pede revalidação", delta_color="off")
+        dd2.metric("Volume médio/dia", f"{fmt_num(vol['referencia'], 0)} → {fmt_num(vol['recente'], 0)}", f"{fmt_num(vol['razao'], 2)}× a referência", delta_color="off")
+        dd3.metric("Taxa de violação", f"{fmt_pct(taxa['referencia'], 1)} → {fmt_pct(taxa['recente'], 1)}", f"{taxa['variacaoPP']:+.2f}".replace(".", ",") + " p.p.", delta_color="off")
+        dd4.metric("Revalidar classificador?", "Sim" if deriva["revalidacaoRecomendada"] else "Não")
+        features_df = pd.DataFrame(deriva["features"])
+        cores_nivel = {"estável": TEAL, "atenção": GOLD, "alto": RED}
+        fig = px.bar(
+            features_df.sort_values("psi"), x="psi", y="feature", orientation="h", color="nivel",
+            color_discrete_map=cores_nivel, text="psi",
+            labels={"psi": "PSI (janela recente vs. treino)", "feature": "", "nivel": "Nível"},
+        )
+        fig.update_traces(texttemplate="%{text:.2f}", textposition="outside", cliponaxis=False)
+        fig.add_vline(x=0.10, line_dash="dot", line_color=MUTED, annotation_text="atenção")
+        fig.add_vline(x=0.20, line_dash="dot", line_color=RED, annotation_text="alto")
+        st.plotly_chart(estilizar_figura(fig, 400), width="stretch")
+        for item in deriva["features"]:
+            with st.expander(f"{item['feature']} · PSI {fmt_num(item['psi'], 3)} · {item['nivel']}"):
+                detalhe_df = pd.DataFrame(item["detalhe"])
+                if not detalhe_df.empty:
+                    detalhe_df = detalhe_df[["faixa", "esperado", "atual", "psi"]].copy()
+                    detalhe_df.columns = ["Faixa", "Treino", "Recente", "Contribuição PSI"]
+                    detalhe_df["Treino"] = detalhe_df["Treino"].map(lambda v: fmt_pct(float(v), 1))
+                    detalhe_df["Recente"] = detalhe_df["Recente"].map(lambda v: fmt_pct(float(v), 1))
+                    detalhe_df["Contribuição PSI"] = detalhe_df["Contribuição PSI"].map(lambda v: fmt_num(float(v), 3))
+                    st.dataframe(detalhe_df, width="stretch", hide_index=True)
+        card_acao(
+            "Leitura do monitor",
+            "Revalidar o classificador de risco antes de automatizar decisões" if deriva["revalidacaoRecomendada"] else "Sem gatilho de revalidação neste snapshot",
+            "O PSI alto em volume reflete a quebra de regime de setembro/2025. O classificador foi treinado com dados "
+            "anteriores a 01/10/2025; a recomendação é reajustar a janela de treino e revalidar o holdout antes de acionar alertas automáticos.",
+            "red" if deriva["revalidacaoRecomendada"] else "teal",
+        )
+        st.download_button(
+            "Baixar PSI por feature (.csv)",
+            data=features_df.drop(columns=["detalhe"]).to_csv(index=False).encode("utf-8-sig"),
+            file_name="monitor_deriva_psi.csv",
+            mime="text/csv",
+        )
+        st.caption(
+            "PSI < 0,10 estável · 0,10–0,20 atenção · > 0,20 mudança relevante. Tudo calculado sobre o snapshot real; "
+            "nenhuma distribuição é sintética."
+        )
 
 
 else:
