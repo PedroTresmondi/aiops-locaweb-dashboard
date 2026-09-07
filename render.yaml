@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: visionops-ai
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+

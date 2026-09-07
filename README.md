@@ -1,11 +1,12 @@
 # visionOps AI — Central de Operações
 
-Aplicação Streamlit do Challenge FIAP × Locaweb 2026. A solução transforma o histórico
-anonimizado de incidentes em uma central de decisão: previsão de volume, triagem preditiva
-de OLA, investigação de causas combinadas, dimensionamento de capacidade e plano de ação
-exportável.
+Aplicação full-stack do Challenge FIAP × Locaweb 2026. O frontend em React + TypeScript
+consome uma API FastAPI que reaproveita os pipelines Python validados. A solução transforma
+o histórico anonimizado de incidentes em previsão de volume, triagem preditiva de OLA,
+diagnóstico de ofensores e dimensionamento de capacidade.
 
-Aplicação pública: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>
+Versão Streamlit publicada: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>. Ela permanece
+como demonstração compatível; a interface principal está em `frontend/`.
 
 ## O que é calculado de verdade
 
@@ -92,13 +93,20 @@ deve automatizar atribuição de culpa ou bloqueio de atendimento.
 
 ```text
 aiops-locaweb-dashboard/
-├── app.py                    # interface e análises operacionais
+├── frontend/                 # aplicação React + TypeScript responsiva
+├── backend/
+│   ├── main.py               # API FastAPI e servidor do build React
+│   └── requirements.txt      # dependências da API
+├── app.py                    # versão Streamlit de contingência
 ├── model_pipeline.py         # features, validação, benchmark e treino final
 ├── risk_pipeline.py          # classificação e calibração temporal de risco de OLA
 ├── dataset_limpo.parquet     # base tratada e regras auditadas de OLA
 ├── tests/
 │   ├── test_pipeline.py      # testes da previsão de volume
-│   └── test_risk_pipeline.py # testes da triagem preditiva
+│   ├── test_risk_pipeline.py # testes da triagem preditiva
+│   └── test_api.py           # contrato e métricas da API
+├── Dockerfile                # build único de frontend + backend
+├── render.yaml               # deploy como Web Service
 ├── requirements.txt
 └── README.md
 ```
@@ -107,12 +115,38 @@ Os antigos artefatos isolados de Random Forest foram removidos para não mistura
 posterior de 21 dias com a validação atual. O novo pipeline recalcula baseline, componentes,
 pesos, holdout e previsões diretamente da base.
 
-## Rodar localmente
+## Rodar a aplicação React + FastAPI localmente
+
+Terminal 1:
+
+```bash
+pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload --port 8000
+```
+
+Terminal 2:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Abra `http://localhost:5173`. Para simular produção, execute `npm run build` dentro de
+`frontend/` e acesse `http://localhost:8000`; o FastAPI servirá o build estático.
+
+## Rodar a versão Streamlit
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+## Deploy full-stack
+
+O `Dockerfile` gera o frontend e publica React + API no mesmo serviço. No Render, importe
+o repositório como Blueprint usando `render.yaml`. A versão React não roda no Streamlit
+Community Cloud porque essa plataforma espera um processo Streamlit, não uma API ASGI.
 
 ## Testar
 
