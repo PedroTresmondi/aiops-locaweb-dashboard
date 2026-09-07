@@ -31,11 +31,13 @@ az container start --resource-group rg-aiops-sprint3-visionopsai --name aci-aiop
 
 ```bash
 # a partir da raiz deste repositório, no Cloud Shell
-az acr build --registry acraiopsvisionopsai --image aiops-sla-monitor:v3 .
+az acr build --registry acraiopsvisionopsai --image aiops-sla-monitor:v3 \
+  --build-arg INSTALL_AZURE=true .
 ```
 
-O `Dockerfile` compila o frontend React, instala `backend/requirements-azure.txt` e serve
-o build estático pelo próprio FastAPI.
+O `Dockerfile` compila o frontend React e serve o build estático pelo próprio FastAPI.
+O `--build-arg INSTALL_AZURE=true` adiciona as libs de MySQL passwordless + Application
+Insights (só necessárias no Azure). Sem esse arg, a imagem fica enxuta para Render/HF/local.
 
 ## 2. Recriar o Container Instance com a nova imagem
 
@@ -88,3 +90,30 @@ cd frontend && npm install && npm run build && cd ..
 uvicorn backend.main:app --port 8000
 # abrir http://localhost:8000
 ```
+
+## Deploy sem Azure (React + FastAPI numa hospedagem Docker)
+
+A imagem enxuta (sem `INSTALL_AZURE`) roda em qualquer plataforma que aceite Docker e
+respeite a variável `PORT`. O app serve o frontend e a API no mesmo processo.
+
+### Hugging Face Spaces (recomendado — 16 GB de RAM no tier grátis)
+
+O treino dos dois pipelines no boot é pesado; o tier grátis do HF aguenta com folga.
+
+1. huggingface.co → New Space → **Docker** (template "Blank") → visibilidade Public.
+2. No Space, aba **Files** → não precisa subir nada manualmente: em **Settings → Link
+   a GitHub repository**, aponte para `PedroTresmondi/aiops-locaweb-dashboard`, branch
+   `main`. O HF lê o `Dockerfile` da raiz.
+3. Adicionar um cabeçalho ao `README.md` do repo (ou criar `README.md` no Space) com:
+   `sdk: docker` e `app_port: 8000`.
+4. O Space builda e publica em `https://<user>-<space>.hf.space`.
+
+### Render (Blueprint via `render.yaml`)
+
+Tier grátis tem 512 MB de RAM — pode faltar memória no treino inicial. Se falhar por
+OOM, subir para o plano Starter ($7/mês) ou usar o HF Spaces.
+
+1. dashboard.render.com → **New +** → **Blueprint** → conectar o repo
+   `PedroTresmondi/aiops-locaweb-dashboard`.
+2. Render lê o `render.yaml` (web service Docker, health check `/api/health`) e cria o serviço.
+3. Deploy automático a cada push em `main`.

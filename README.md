@@ -1,3 +1,13 @@
+---
+title: visionOps AI
+emoji: "\U0001F4CA"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # visionOps AI — Central de Operações
 
 Aplicação full-stack do Challenge FIAP × Locaweb 2026. O frontend em React + TypeScript
@@ -5,8 +15,9 @@ consome uma API FastAPI que reaproveita os pipelines Python validados. A soluç�
 o histórico anonimizado de incidentes em previsão de volume, triagem preditiva de OLA,
 diagnóstico de ofensores e dimensionamento de capacidade.
 
-Versão Streamlit publicada: <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>. Ela permanece
-como demonstração compatível; a interface principal está em `frontend/`.
+O bloco YAML acima é a configuração do Hugging Face Spaces (deploy Docker do app
+React + FastAPI). Uma versão Streamlit equivalente está em
+<https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/> (fonte: `app.py`).
 
 ## O que é calculado de verdade
 
