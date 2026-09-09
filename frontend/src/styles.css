@@ -291,6 +291,12 @@ tr:hover td { background: #132237; }
 .recharts-cartesian-axis-tick-value { fill: #7f91a6; }
 .recharts-legend-item-text { color: #91a1b5 !important; }
 .recharts-default-tooltip { color: #dfe8f2 !important; background: #111e2e !important; border-color: #2b3d53 !important; border-radius: 8px; }
+.recharts-default-tooltip .recharts-tooltip-label,
+.recharts-default-tooltip .recharts-tooltip-item,
+.recharts-default-tooltip .recharts-tooltip-item-name,
+.recharts-default-tooltip .recharts-tooltip-item-value {
+  color: #f4f8fc !important;
+}
 
 /* Sprint 4 — fila operacional, perfis, monitor, otimização */
 .perfil-picker { display: flex; flex-direction: column; gap: 5px; margin: 14px 0 4px; padding: 11px 12px; border: 1px solid rgba(125,170,226,.16); border-radius: 11px; background: rgba(255,255,255,.04); }
