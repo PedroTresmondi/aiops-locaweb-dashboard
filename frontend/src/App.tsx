@@ -76,21 +76,43 @@ function Panel({ title, subtitle, children, className = '' }: { title: string; s
   return <section className={`panel ${className}`}><div className="panel-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div></div>{children}</section>
 }
 
-function OverviewPage() {
+function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
   const [data, setData] = useState<Overview>()
+  const [status, setStatus] = useState<ModelStatus>()
   const [error, setError] = useState('')
-  useEffect(() => { api<Overview>('/api/overview').then(setData).catch(e => setError(e.message)) }, [])
+  useEffect(() => {
+    api<Overview>('/api/overview').then(setData).catch(e => setError(e.message))
+    api<ModelStatus>('/api/model-status').then(setStatus).catch(() => {})
+  }, [])
   if (error) return <ErrorState message={error}/>
   if (!data) return <Loading label="Executando previsões e validações"/>
   const d1 = data.forecast[0]
   const d7 = data.forecast[1]
+  const margemD1 = d1.superior / d1.ponto - 1
+  const exigeRevalidacao = status?.revalidacaoRecomendada ?? false
   return <>
-    <PageTitle eyebrow="Command center" title="Central operacional" copy={`Snapshot de ${date(data.snapshot.inicio)} a ${date(data.snapshot.fim)} · decisões com rastreabilidade`} actions={<button className="ghost-button"><Clock3 size={16}/> Atualizado no snapshot</button>}/>
+    <PageTitle eyebrow="Visão executiva" title="Central operacional" copy={`Cenário calculado sobre o snapshot de ${date(data.snapshot.inicio)} a ${date(data.snapshot.fim)}`} actions={<button className="ghost-button"><Clock3 size={16}/> Dados históricos auditados</button>}/>
+    <section className={`executive-brief ${exigeRevalidacao ? 'attention' : ''}`}>
+      <div className="executive-main">
+        <div className="executive-kicker"><span>Decisão D+1</span><b>{exigeRevalidacao ? 'Atenção operacional' : 'Cenário monitorado'}</b></div>
+        <h2>Prepare capacidade para até {int.format(d1.superior)} chamados</h2>
+        <p>O plano-base é de <strong>{int.format(d1.ponto)}</strong>. A faixa superior adiciona <strong>{pct(margemD1)}</strong> de proteção contra incerteza no próximo dia do snapshot.</p>
+        <div className="executive-meta">
+          <span><CheckCircle2/> Previsão validada fora da amostra</span>
+          <span className={exigeRevalidacao ? 'warning' : ''}><Radar/> {exigeRevalidacao ? 'Revalidar antes de automatizar' : 'Modelo dentro do ciclo'}</span>
+        </div>
+      </div>
+      <div className="executive-next">
+        <span>Próximos passos</span>
+        <button onClick={() => onNavigate('queue')}><div><small>Analista</small><strong>Trabalhar a fila priorizada</strong><p>Revisar primeiro os {pct(data.risk.filaAlta)} de maior risco.</p></div><ArrowRight/></button>
+        <button onClick={() => onNavigate('monitor')}><div><small>Responsável pelo modelo</small><strong>Conferir saúde e deriva</strong><p>{exigeRevalidacao ? 'Há uma recomendação de revalidação ativa.' : 'Acompanhar o ciclo de revalidação.'}</p></div><ArrowRight/></button>
+      </div>
+    </section>
     <div className="stats-grid">
-      <StatCard icon={<Activity/>} label="Demanda prevista D+1" value={int.format(d1.ponto)} detail={`Faixa de 80%: ${int.format(d1.inferior)}–${int.format(d1.superior)}`} tone="orange"/>
-      <StatCard icon={<TrendingUp/>} label="Demanda prevista D+7" value={int.format(d7.ponto)} detail={`Faixa de 80%: ${int.format(d7.inferior)}–${int.format(d7.superior)}`} tone="teal"/>
-      <StatCard icon={<ShieldCheck/>} label="Violação de OLA" value={pct(data.snapshot.taxaOla, 2)} detail={`${int.format(data.snapshot.violacoes)} de ${int.format(data.snapshot.elegiveis)} elegíveis`} tone="red"/>
-      <StatCard icon={<Target/>} label="Captura na fila de risco" value={pct(data.risk.captura)} detail={`Revisando ${pct(data.risk.filaAlta)} · lift ${dec.format(data.risk.lift)}×`} tone="violet"/>
+      <StatCard icon={<Activity/>} label="Plano-base para D+1" value={int.format(d1.ponto)} detail={`Cenário de segurança: até ${int.format(d1.superior)}`} tone="orange"/>
+      <StatCard icon={<TrendingUp/>} label="Demanda esperada em D+7" value={int.format(d7.ponto)} detail={`Faixa provável: ${int.format(d7.inferior)}–${int.format(d7.superior)}`} tone="teal"/>
+      <StatCard icon={<ShieldCheck/>} label="Risco histórico de violação" value={pct(data.snapshot.taxaOla, 2)} detail={`${int.format(data.snapshot.violacoes)} violações em ${int.format(data.snapshot.elegiveis)} elegíveis`} tone="red"/>
+      <StatCard icon={<Target/>} label="Eficiência da priorização" value={pct(data.risk.captura)} detail={`das violações em apenas ${pct(data.risk.filaAlta)} da fila`} tone="violet"/>
     </div>
     <div className="content-grid wide-left">
       <Panel title="Pulso da operação" subtitle="Volume diário observado nos últimos 120 dias">
@@ -99,12 +121,11 @@ function OverviewPage() {
           <CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="data" tickFormatter={date} minTickGap={38} axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip labelFormatter={label => date(String(label))} formatter={value => [int.format(Number(value)), 'Incidentes']}/><Area type="monotone" dataKey="incidentes" stroke="#2563eb" strokeWidth={2.4} fill="url(#volumeFill)"/>
         </AreaChart></ResponsiveContainer></div>
       </Panel>
-      <Panel title="Decisão recomendada" subtitle="Próxima ação baseada nos sinais atuais" className="decision-panel">
+      <Panel title="Por que essa é a decisão" subtitle="Evidências que sustentam a recomendação" className="decision-panel">
         <div className="decision-icon"><Sparkles/></div>
-        <h3>Dimensione pela faixa superior</h3>
-        <p>Use até <strong>{int.format(d1.superior)} incidentes</strong> no plano de contingência de D+1. O ponto central é {int.format(d1.ponto)}.</p>
-        <div className="decision-rule"><span>Confiabilidade D+1</span><strong>WAPE {pct(data.validation['D+1'].wape)}</strong></div>
-        <div className="decision-rule"><span>Fila preditiva</span><strong>{dec.format(data.risk.lift)}× mais precisa</strong></div>
+        <div className="business-reason"><span>01</span><div><strong>Incerteza controlada</strong><p>Erro médio relativo de {pct(data.validation['D+1'].wape)} no teste temporal.</p></div></div>
+        <div className="business-reason"><span>02</span><div><strong>Esforço concentrado</strong><p>A fila de risco entrega lift de {dec.format(data.risk.lift)}×.</p></div></div>
+        <div className="business-reason"><span>03</span><div><strong>Governança ativa</strong><p>{exigeRevalidacao ? 'A deriva exige revisão antes de decisões automáticas.' : 'O modelo segue dentro do ciclo de revisão.'}</p></div></div>
       </Panel>
     </div>
     <Panel title="OLA e volume por mês" subtitle="A taxa considera somente incidentes elegíveis ao KPI">
@@ -320,6 +341,8 @@ function AuditPage() {
 }
 
 const FAIXA_CLASSE: Record<string, string> = { Alto: 'alto', Moderado: 'moderado', Baixo: 'baixo' }
+const RECOMENDACAO_FILA: Record<string, string> = { Alto: 'Escalar agora', Moderado: 'Priorizar hoje', Baixo: 'Acompanhar' }
+const ACAO_LABEL: Record<string, string> = { atribuido: 'Atribuir', escalado: 'Escalar', resolvido: 'Marcar resolvido', dispensado: 'Dispensar' }
 const parseCsv = (texto: string): Record<string, string>[] => {
   const linhas = texto.trim().split(/\r?\n/).filter(Boolean)
   if (linhas.length < 2) return []
@@ -342,17 +365,16 @@ function FilaRow({ item, perfil, loteId, onAction }: { item: ItemFila; perfil: P
   }
   return <>
     <tr className={`fila-row ${aberto ? 'open' : ''}`} onClick={() => setAberto(v => !v)}>
-      <td><span className={`risk-pill ${FAIXA_CLASSE[item.faixa]}`}>{pct(item.probabilidade)}</span></td>
-      <td>{item.faixa}</td>
+      <td><div className="risk-cell"><span className={`risk-pill ${FAIXA_CLASSE[item.faixa]}`}>{pct(item.probabilidade)}</span><small>{item.faixa}</small></div></td>
       <td className="mono">{item.id}</td>
       <td>P{item.prioridade}</td>
-      <td>{item.produto}</td>
-      <td>{item.categoria}</td>
+      <td><div className="entity-cell"><strong>{item.produto}</strong><small>{item.categoria}</small></div></td>
       <td>{item.grupo}</td>
+      <td><span className={`next-action ${FAIXA_CLASSE[item.faixa]}`}>{RECOMENDACAO_FILA[item.faixa]}</span></td>
       <td>{item.violouReal === undefined ? '—' : item.violouReal ? <span className="rate bad">violou</span> : 'ok'}</td>
       <td>{registrada && registrada !== 'erro' ? <span className="rate">{registrada}</span> : <ChevronRight className={aberto ? 'chevron open' : 'chevron'}/>}</td>
     </tr>
-    {aberto && <tr className="fila-detalhe"><td colSpan={9}>
+    {aberto && <tr className="fila-detalhe"><td colSpan={8}>
       <div className="fatores">
         {item.fatores.map(f => <div key={f.fator} className="fator">
           <span>{f.fator}: <b>{f.valor}</b></span>
@@ -361,7 +383,7 @@ function FilaRow({ item, perfil, loteId, onAction }: { item: ItemFila; perfil: P
         </div>)}
       </div>
       {podeAgir && <div className="fila-acoes">
-        {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <button key={a} onClick={e => { e.stopPropagation(); registrar(a) }}>{a}</button>)}
+        {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <button key={a} onClick={e => { e.stopPropagation(); registrar(a) }}>{ACAO_LABEL[a]}</button>)}
       </div>}
       {!podeAgir && <p className="fila-nota">Perfil Gestor: visão de acompanhamento, sem registro de ação.</p>}
     </td></tr>}
@@ -445,14 +467,22 @@ function QueuePage({ perfil }: { perfil: Perfil }) {
         <StatCard icon={<ListChecks/>} label="Chamados na fila" value={int.format(r.total)} detail={`${int.format(r.filaAlta)} em risco alto · ${int.format(r.filaModerada)} moderado`} tone="navy"/>
         <StatCard icon={<AlertTriangle/>} label="Violações esperadas" value={dec.format(r.violacoesEsperadas)} detail="Soma das probabilidades calibradas do lote" tone="red"/>
         <StatCard icon={<Target/>} label="Captura no topo 20%" value={pct(r.capturaTop20Pct)} detail="Do risco total, quanto está nos primeiros 20% da fila" tone="teal"/>
-        <StatCard icon={<CheckCircle2/>} label="Risco priorizado" value={resumoAcoes ? dec.format(resumoAcoes.riscoPriorizado) : '—'} detail={resumoAcoes ? `${int.format(resumoAcoes.ticketsComAcao)} chamados com ação registrada` : 'Sem ações ainda'} tone="violet"/>
+        <StatCard icon={<CheckCircle2/>} label="Ações registradas" value={resumoAcoes ? int.format(resumoAcoes.ticketsComAcao) : '—'} detail={resumoAcoes ? `${dec.format(resumoAcoes.riscoPriorizado)} de risco já endereçado` : 'Sem ações ainda'} tone="violet"/>
       </div>
+      <section className="queue-brief">
+        <div className="queue-brief-copy"><span>Leitura para decisão</span><h2>Comece pelos {int.format(Math.ceil(r.total * .2))} chamados do topo</h2><p>Esse grupo concentra <strong>{pct(r.capturaTop20Pct)}</strong> do risco previsto. A sequência abaixo transforma o score em uma rotina simples de operação.</p></div>
+        <div className="queue-action-lanes">
+          <div className="lane high"><span>Agora</span><strong>Escalar {int.format(r.filaAlta)}</strong><p>Risco alto · direcionar para atendimento especializado.</p></div>
+          <div className="lane medium"><span>Hoje</span><strong>Priorizar {int.format(r.filaModerada)}</strong><p>Risco moderado · atribuir e acompanhar prazo.</p></div>
+          <div className="lane low"><span>Rotina</span><strong>Acompanhar {int.format(r.total - r.filaAlta - r.filaModerada)}</strong><p>Risco baixo · manter na fila padrão.</p></div>
+        </div>
+      </section>
       {r.violacoesReais !== undefined && <div className="insight"><Sparkles size={18}/><p><strong>Conferência:</strong> neste dia real houve {int.format(r.violacoesReais)} violação(ões) de OLA; {int.format(r.violacoesReaisNoTop20 ?? 0)} está(ão) nos primeiros 20% da fila ordenada pelo modelo.</p></div>}
 
       <Panel title="Fila priorizada" subtitle="Clique numa linha para ver a contribuição de cada fator e registrar ação">
         <div className="data-table-wrap">
           <table className="fila-table">
-            <thead><tr><th>Risco</th><th>Faixa</th><th>Chamado</th><th>Pri.</th><th>Produto</th><th>Categoria</th><th>Grupo</th><th>Resultado</th><th></th></tr></thead>
+            <thead><tr><th>Risco</th><th>Chamado</th><th>Pri.</th><th>Produto / categoria</th><th>Grupo</th><th>Próxima ação</th><th>Resultado</th><th></th></tr></thead>
             <tbody>{resposta!.fila.map(item => <FilaRow key={item.id} item={item} perfil={perfil} loteId={resposta!.loteId} onAction={recarregarAcoes}/>)}</tbody>
           </table>
         </div>
@@ -550,7 +580,7 @@ export default function App() {
   const current = useMemo(() => nav.find(item => item.id === page)!, [page])
 
   const workspace = page === 'queue' ? <QueuePage perfil={perfil}/>
-    : page === 'overview' ? <OverviewPage/>
+    : page === 'overview' ? <OverviewPage onNavigate={setPage}/>
     : page === 'triage' ? <TriagePage/>
     : page === 'diagnostics' ? <DiagnosticsPage/>
     : page === 'optimization' ? <OptimizationPage/>
