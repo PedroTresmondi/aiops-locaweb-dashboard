@@ -1,8 +1,8 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CheckCircle2,
+  Activity, AlertTriangle, ArrowRight, BarChart3, CheckCircle2,
   ChevronRight, CircleGauge, Clock3, Database, ListChecks, Menu, Radar, Search,
-  ShieldCheck, SlidersHorizontal, Sparkles, Target, TrendingUp, UploadCloud, Users, X,
+  ShieldCheck, SlidersHorizontal, Target, TrendingUp, UploadCloud, Users, X,
 } from 'lucide-react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
@@ -19,13 +19,13 @@ type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | '
 const nav: { id: Page; label: string; icon: typeof Activity }[] = [
   { id: 'overview', label: 'Central operacional', icon: CircleGauge },
   { id: 'queue', label: 'Fila operacional', icon: ListChecks },
-  { id: 'triage', label: 'Triagem preditiva', icon: Sparkles },
+  { id: 'triage', label: 'Avaliação de risco', icon: ShieldCheck },
   { id: 'diagnostics', label: 'Diagnóstico de OLA', icon: Target },
-  { id: 'optimization', label: 'Alocação preventiva', icon: SlidersHorizontal },
-  { id: 'capacity', label: 'Capacidade & ação', icon: Users },
-  { id: 'monitor', label: 'Monitor de deriva', icon: Radar },
-  { id: 'models', label: 'Modelo & previsão', icon: BrainCircuit },
-  { id: 'audit', label: 'Auditoria de dados', icon: Database },
+  { id: 'optimization', label: 'Alocação de capacidade', icon: SlidersHorizontal },
+  { id: 'capacity', label: 'Simulador de equipe', icon: Users },
+  { id: 'monitor', label: 'Saúde das previsões', icon: Radar },
+  { id: 'models', label: 'Desempenho', icon: BarChart3 },
+  { id: 'audit', label: 'Qualidade dos dados', icon: Database },
 ]
 
 const PERFIS: { id: Perfil; label: string }[] = [
@@ -51,7 +51,7 @@ const pct = (value: number, digits = 1) => `${(value * 100).toFixed(digits).repl
 const date = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
 
 function Loading({ label = 'Preparando análise operacional' }: { label?: string }) {
-  return <div className="loading"><div className="loader"/><strong>{label}</strong><span>Os modelos são calculados com o snapshot real.</span></div>
+  return <div className="loading"><div className="loader"/><strong>{label}</strong><span>Cálculos executados sobre o snapshot auditado.</span></div>
 }
 
 function ErrorState({ message }: { message: string }) {
@@ -98,14 +98,14 @@ function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
         <h2>Prepare capacidade para até {int.format(d1.superior)} chamados</h2>
         <p>O plano-base é de <strong>{int.format(d1.ponto)}</strong>. A faixa superior adiciona <strong>{pct(margemD1)}</strong> de proteção contra incerteza no próximo dia do snapshot.</p>
         <div className="executive-meta">
-          <span><CheckCircle2/> Previsão validada fora da amostra</span>
-          <span className={exigeRevalidacao ? 'warning' : ''}><Radar/> {exigeRevalidacao ? 'Revalidar antes de automatizar' : 'Modelo dentro do ciclo'}</span>
+          <span><CheckCircle2/> Método avaliado em período separado</span>
+          <span className={exigeRevalidacao ? 'warning' : ''}><Radar/> {exigeRevalidacao ? 'Revisão necessária antes da automação' : 'Revisão em dia'}</span>
         </div>
       </div>
       <div className="executive-next">
         <span>Próximos passos</span>
         <button onClick={() => onNavigate('queue')}><div><small>Analista</small><strong>Trabalhar a fila priorizada</strong><p>Revisar primeiro os {pct(data.risk.filaAlta)} de maior risco.</p></div><ArrowRight/></button>
-        <button onClick={() => onNavigate('monitor')}><div><small>Responsável pelo modelo</small><strong>Conferir saúde e deriva</strong><p>{exigeRevalidacao ? 'Há uma recomendação de revalidação ativa.' : 'Acompanhar o ciclo de revalidação.'}</p></div><ArrowRight/></button>
+        <button onClick={() => onNavigate('monitor')}><div><small>Gestão e qualidade</small><strong>Conferir estabilidade dos dados</strong><p>{exigeRevalidacao ? 'Os dados recentes exigem uma nova avaliação.' : 'A revisão dos dados está em dia.'}</p></div><ArrowRight/></button>
       </div>
     </section>
     <div className="stats-grid">
@@ -121,11 +121,11 @@ function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
           <CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="data" tickFormatter={date} minTickGap={38} axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip labelFormatter={label => date(String(label))} formatter={value => [int.format(Number(value)), 'Incidentes']}/><Area type="monotone" dataKey="incidentes" stroke="#2563eb" strokeWidth={2.4} fill="url(#volumeFill)"/>
         </AreaChart></ResponsiveContainer></div>
       </Panel>
-      <Panel title="Por que essa é a decisão" subtitle="Evidências que sustentam a recomendação" className="decision-panel">
-        <div className="decision-icon"><Sparkles/></div>
+      <Panel title="Fundamentos da recomendação" subtitle="Indicadores usados no planejamento" className="decision-panel">
+        <div className="decision-icon"><ListChecks/></div>
         <div className="business-reason"><span>01</span><div><strong>Incerteza controlada</strong><p>Erro médio relativo de {pct(data.validation['D+1'].wape)} no teste temporal.</p></div></div>
         <div className="business-reason"><span>02</span><div><strong>Esforço concentrado</strong><p>A fila de risco entrega lift de {dec.format(data.risk.lift)}×.</p></div></div>
-        <div className="business-reason"><span>03</span><div><strong>Governança ativa</strong><p>{exigeRevalidacao ? 'A deriva exige revisão antes de decisões automáticas.' : 'O modelo segue dentro do ciclo de revisão.'}</p></div></div>
+        <div className="business-reason"><span>03</span><div><strong>Revisão dos dados</strong><p>{exigeRevalidacao ? 'A mudança recente exige nova avaliação antes de automatizar decisões.' : 'Os dados permanecem dentro do ciclo de revisão.'}</p></div></div>
       </Panel>
     </div>
     <Panel title="OLA e volume por mês" subtitle="A taxa considera somente incidentes elegíveis ao KPI">
@@ -156,7 +156,7 @@ function TriagePage() {
     } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
   return <>
-    <PageTitle eyebrow="Decision intelligence" title="Triagem preditiva" copy="Estime o risco de violação no momento em que o incidente entra na fila."/>
+    <PageTitle eyebrow="Operação diária" title="Avaliação de risco" copy="Estime o risco de violação no momento em que o incidente entra na fila."/>
     <div className="content-grid form-layout">
       <Panel title="Contexto do incidente" subtitle="Somente variáveis conhecidas na abertura">
         {!options ? <Loading label="Carregando valores históricos"/> : <form className="form-grid" onSubmit={submit}>
@@ -166,12 +166,12 @@ function TriagePage() {
           <label><span>Grupo designado</span><select value={form.grupo} onChange={e => setForm({ ...form, grupo: e.target.value })}>{options.grupos.map(v => <option key={v}>{v}</option>)}</select></label>
           <label><span>Data</span><input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })}/></label>
           <label><span>Hora</span><input type="time" value={form.hora} onChange={e => setForm({ ...form, hora: e.target.value })}/></label>
-          <button className="primary-button span-2" disabled={loading}>{loading ? 'Calculando risco…' : <><BrainCircuit size={18}/> Calcular risco real</>}</button>
+          <button className="primary-button span-2" disabled={loading}>{loading ? 'Calculando risco…' : <><ShieldCheck size={18}/> Avaliar risco</>}</button>
         </form>}
         {error && <ErrorState message={error}/>} 
       </Panel>
       <section className={`risk-result ${result ? result.faixa.toLowerCase() : ''}`}>
-        {!result ? <div className="empty-result"><BrainCircuit/><h2>Modelo pronto para analisar</h2><p>Preencha o contexto e execute a triagem. Nenhuma duração ou resultado futuro é usado.</p></div> : <>
+        {!result ? <div className="empty-result"><ShieldCheck/><h2>Aguardando os dados do chamado</h2><p>Preencha o contexto para calcular o risco. A análise usa somente informações disponíveis na abertura.</p></div> : <>
           <div className="risk-top"><span>Risco calibrado de violação</span><span className="risk-badge">{result.faixa}</span></div>
           <div className="risk-value">{pct(result.probabilidade)}</div>
           <div className="risk-track"><span style={{ width: `${Math.min(100, result.probabilidade * 100)}%` }}/></div>
@@ -191,8 +191,8 @@ function SegmentacaoPanel({ dimension }: { dimension: string }) {
   const [error, setError] = useState('')
   useEffect(() => { setData(undefined); api<Segmentation>(`/api/segmentation?dimension=${encodeURIComponent(dimension)}`).then(setData).catch(e => setError(e.message)) }, [dimension])
   if (error) return <ErrorState message={error}/>
-  if (!data) return <Panel title="Segmentação de criticidade (K-Means)" subtitle="Carregando"><Loading/></Panel>
-  return <Panel title="Segmentação de criticidade (K-Means)" subtitle={`Seção 17 do notebook de ML · K=${data.kEscolhido} escolhido por ${data.criterio}`}>
+  if (!data) return <Panel title="Grupos de criticidade" subtitle="Carregando"><Loading/></Panel>
+  return <Panel title="Grupos de criticidade" subtitle={`Agrupamento estatístico com K=${data.kEscolhido}, selecionado por ${data.criterio}`}>
     <div className="model-table">
       <div className="table-row table-head"><span>Cluster</span><span>Entidades</span><span>Incidentes</span><span>OLA violados</span><span>Taxa média</span></div>
       {data.clusters.map(c => <div className="table-row" key={c.posicao}>
@@ -200,7 +200,7 @@ function SegmentacaoPanel({ dimension }: { dimension: string }) {
         <span>{int.format(c.olaViolados)}</span><span className={c.posicao === 0 ? 'negative' : ''}>{pct(c.taxaMedia)}</span>
       </div>)}
     </div>
-    <div className="insight"><Sparkles size={18}/><p><strong>Leitura:</strong> o cluster mais crítico costuma ter volume menor mas taxa de violação bem mais alta — a ordenação simples por soma não separa isso. Método recalculado sobre o snapshot atual.</p></div>
+    <div className="insight"><BarChart3 size={18}/><p><strong>Leitura:</strong> o grupo mais crítico costuma ter menor volume e taxa de violação mais alta. A ordenação somente por quantidade não mostra essa diferença.</p></div>
   </Panel>
 }
 
@@ -210,7 +210,7 @@ function DiagnosticsPage() {
   const [error, setError] = useState('')
   useEffect(() => { setData(undefined); api<Diagnostic>(`/api/diagnostics?dimension=${encodeURIComponent(dimension)}&min_sample=30`).then(setData).catch(e => setError(e.message)) }, [dimension])
   return <>
-    <PageTitle eyebrow="Root cause explorer" title="Diagnóstico de OLA" copy="Priorize onde o volume de violações e a taxa de risco realmente se concentram." actions={<div className="segmented">{['Categoria','Produto','Grupo designado'].map(v => <button className={dimension === v ? 'active' : ''} onClick={() => setDimension(v)} key={v}>{v === 'Grupo designado' ? 'Grupo' : v}</button>)}</div>}/>
+    <PageTitle eyebrow="Análise operacional" title="Diagnóstico de OLA" copy="Priorize onde o volume de violações e a taxa de risco realmente se concentram." actions={<div className="segmented">{['Categoria','Produto','Grupo designado'].map(v => <button className={dimension === v ? 'active' : ''} onClick={() => setDimension(v)} key={v}>{v === 'Grupo designado' ? 'Grupo' : v}</button>)}</div>}/>
     {error ? <ErrorState message={error}/> : !data ? <Loading/> : <div className="content-grid wide-left">
       <Panel title={`Maiores ofensores por ${dimension.toLowerCase()}`} subtitle="Barras = violações · linha de referência = taxa geral">
         <div className="chart-xl"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.items.slice(0, 10)} layout="vertical" margin={{ left: 5, right: 20, top: 5, bottom: 5 }}>
@@ -219,7 +219,7 @@ function DiagnosticsPage() {
       </Panel>
       <Panel title="Fila de ação" subtitle={`Taxa geral: ${pct(data.taxaGeral)}`}>
         <div className="action-list">{data.items.slice(0, 6).map((item, index) => <div className="action-item" key={item.nome}><span className="rank">{index + 1}</span><div><strong>{item.nome}</strong><small>{int.format(item.violacoes)} violações de {int.format(item.elegiveis)}</small></div><div className={item.taxa > data.taxaGeral ? 'rate bad' : 'rate'}>{pct(item.taxa)}</div></div>)}</div>
-        <div className="insight"><Sparkles size={18}/><p><strong>Prioridade sugerida:</strong> atuar primeiro nos itens com maior número absoluto; use a taxa para diferenciar concentração de volume de risco estrutural.</p></div>
+        <div className="insight"><BarChart3 size={18}/><p><strong>Prioridade sugerida:</strong> comece pelos itens com mais violações. Use a taxa para identificar casos em que o risco permanece alto mesmo com menor volume.</p></div>
       </Panel>
     </div>}
     <SegmentacaoPanel dimension={dimension}/>
@@ -236,7 +236,7 @@ function CapacityPage() {
   }
   useEffect(() => { submit() }, [])
   return <>
-    <PageTitle eyebrow="What-if simulator" title="Capacidade & ação" copy="Converta a previsão de demanda em uma decisão de escala operacional."/>
+    <PageTitle eyebrow="Planejamento de equipe" title="Simulador de capacidade" copy="Converta a previsão de demanda em uma decisão de escala operacional."/>
     <div className="content-grid form-layout">
       <Panel title="Premissas operacionais" subtitle="Parâmetros ajustáveis e explicitamente separados do modelo">
         <form className="form-grid" onSubmit={submit}>
@@ -271,7 +271,7 @@ function AdvancedModelPanel() {
     className="advanced-panel">
     <div className="segmented" style={{ marginBottom: 14 }}>{['D+1', 'D+7'].map(h => <button key={h} className={horizonte === h ? 'active' : ''} onClick={() => setHorizonte(h)}>{h}</button>)}</div>
     <div className="stats-grid">
-      <StatCard icon={<BrainCircuit/>} label={`MAE ${horizonte} · backtest`} value={dec.format(m.mae)} detail={`${m.nPontos} previsões · WAPE ${pct(m.wape)}`} tone="violet"/>
+      <StatCard icon={<BarChart3/>} label={`MAE ${horizonte} · backtest`} value={dec.format(m.mae)} detail={`${m.nPontos} previsões · WAPE ${pct(m.wape)}`} tone="navy"/>
       <StatCard icon={<TrendingUp/>} label="vs. baseline linear" value={pct(m.ganhoVsBaseline)} detail={`MAE baseline: ${dec.format(m.maeBaseline)}`} tone="teal"/>
       <StatCard icon={<Target/>} label="vs. ensemble operacional" value={pct(m.ganhoVsOperacional)} detail={`MAE operacional: ${dec.format(m.maeOperacional)}`} tone={m.ganhoVsOperacional >= 0 ? 'teal' : 'orange'}/>
       <StatCard icon={<Clock3/>} label={`Previsão ${horizonte} · ${date(prev.dataAlvo)}`} value={int.format(prev.ponto)} detail={`${int.format(prev.inferior)}–${int.format(prev.superior)}${prev.alvoFeriado ? ' · alvo é feriado' : ''}`} tone="orange"/>
@@ -301,9 +301,9 @@ function ModelsPage() {
   if (error) return <ErrorState message={error}/>
   if (!data) return <Loading label="Carregando validação temporal"/>
   return <>
-    <PageTitle eyebrow="Model governance" title="Modelo & previsão" copy="Desempenho fora da amostra, calibração e sinais usados na decisão."/>
+    <PageTitle eyebrow="Validação das previsões" title="Desempenho" copy="Resultados em período separado, calibração do risco e variáveis usadas no cálculo."/>
     <div className="stats-grid">
-      <StatCard icon={<BrainCircuit/>} label="ROC-AUC risco" value={dec.format(data.risk.rocAuc)} detail="Discriminação no holdout" tone="violet"/>
+      <StatCard icon={<BarChart3/>} label="ROC-AUC risco" value={dec.format(data.risk.rocAuc)} detail="Discriminação no período de teste" tone="navy"/>
       <StatCard icon={<Target/>} label="PR-AUC risco" value={dec.format(data.risk.prAuc)} detail={`Base positiva: ${pct(data.risk.prevalencia)}`} tone="orange"/>
       <StatCard icon={<ShieldCheck/>} label="Captura de violações" value={pct(data.risk.captura)} detail={`Com ${pct(data.risk.filaAlta)} dos casos`} tone="teal"/>
       <StatCard icon={<TrendingUp/>} label="Lift da fila" value={`${dec.format(data.risk.lift)}×`} detail={`Precisão: ${pct(data.risk.precisaoFila)}`} tone="red"/>
@@ -332,7 +332,7 @@ function AuditPage() {
   if (!data) return <Loading/>
   const columns = data.sample.length ? Object.keys(data.sample[0]) : []
   return <>
-    <PageTitle eyebrow="Data observability" title="Auditoria de dados" copy="Transparência sobre completude, universo analítico e registros que sustentam as decisões."/>
+    <PageTitle eyebrow="Qualidade da base" title="Qualidade dos dados" copy="Completude, universo analisado e registros que sustentam as decisões."/>
     <div className="quality-grid">{data.missing.map(item => <article key={item.campo}><div><span>{item.campo}</span><strong>{pct(1-item.taxa)} completos</strong></div><div className="quality-track"><span style={{ width: `${(1-item.taxa)*100}%` }}/></div><small>{int.format(item.faltantes)} ausentes</small></article>)}</div>
     <Panel title="Amostra auditável" subtitle="50 registros mais recentes do snapshot — nenhuma linha sintética">
       <div className="data-table-wrap"><table><thead><tr>{columns.map(c => <th key={c}>{c}</th>)}</tr></thead><tbody>{data.sample.map((row, index) => <tr key={index}>{columns.map(c => <td key={c}>{typeof row[c] === 'boolean' ? (row[c] ? 'Sim' : 'Não') : String(row[c] ?? '—')}</td>)}</tr>)}</tbody></table></div>
@@ -433,7 +433,7 @@ function QueuePage({ perfil }: { perfil: Perfil }) {
 
   const r = resposta?.resumo
   return <>
-    <PageTitle eyebrow="Batch operations" title="Fila operacional" copy="Pontue um lote de chamados, ordene por risco de violação e registre as ações da operação." actions={
+    <PageTitle eyebrow="Priorização diária" title="Fila operacional" copy="Avalie um lote de chamados, ordene por risco de violação e registre as ações da operação." actions={
       resposta && <button className="ghost-button" onClick={exportar}><ArrowRight size={15}/> Exportar fila (.csv)</button>
     }/>
     <div className="segmented queue-modes">
@@ -477,7 +477,7 @@ function QueuePage({ perfil }: { perfil: Perfil }) {
           <div className="lane low"><span>Rotina</span><strong>Acompanhar {int.format(r.total - r.filaAlta - r.filaModerada)}</strong><p>Risco baixo · manter na fila padrão.</p></div>
         </div>
       </section>
-      {r.violacoesReais !== undefined && <div className="insight"><Sparkles size={18}/><p><strong>Conferência:</strong> neste dia real houve {int.format(r.violacoesReais)} violação(ões) de OLA; {int.format(r.violacoesReaisNoTop20 ?? 0)} está(ão) nos primeiros 20% da fila ordenada pelo modelo.</p></div>}
+      {r.violacoesReais !== undefined && <div className="insight"><BarChart3 size={18}/><p><strong>Conferência:</strong> neste dia ocorreram {int.format(r.violacoesReais)} violações de OLA. A fila posicionou {int.format(r.violacoesReaisNoTop20 ?? 0)} delas nos primeiros 20%.</p></div>}
 
       <Panel title="Fila priorizada" subtitle="Clique numa linha para ver a contribuição de cada fator e registrar ação">
         <div className="data-table-wrap">
@@ -510,7 +510,7 @@ function OptimizationPage() {
   }
   useEffect(() => { calcular() }, [])
   return <>
-    <PageTitle eyebrow="Prescriptive optimization" title="Alocação preventiva D+1" copy="Programação linear inteira (Seção 18 do notebook de ML): quais produtos revisar amanhã para cobrir o máximo de risco de OLA."/>
+    <PageTitle eyebrow="Planejamento de capacidade" title="Alocação de capacidade D+1" copy="Indique quais produtos revisar no próximo dia para cobrir a maior parcela do risco de OLA."/>
     <div className="content-grid form-layout">
       <Panel title="Parâmetros do modelo" subtitle="Capacidade e limite por categoria — calibráveis com a operação real">
         <form className="form-grid" onSubmit={e => { e.preventDefault(); calcular() }}>
@@ -546,15 +546,15 @@ function MonitorPage() {
   if (!status || !drift) return <Loading label="Comparando janelas de dados"/>
   const nivelClasse: Record<string, string> = { 'estável': 'positive', 'atenção': '', 'alto': 'negative' }
   return <>
-    <PageTitle eyebrow="Model governance" title="Monitor de deriva" copy="Deriva entre a janela de treino e os dados recentes, e quando o modelo precisa ser revalidado."/>
+    <PageTitle eyebrow="Acompanhamento estatístico" title="Saúde das previsões" copy="Compare os dados de referência com o período recente e identifique quando uma nova avaliação é necessária."/>
     <div className={`decision-panel panel ${status.revalidacaoRecomendada ? 'alerta' : ''}`}>
       <div className="decision-icon"><Radar/></div>
-      <h3>{status.revalidacaoRecomendada ? 'Revalidação recomendada' : 'Modelo dentro do ciclo'}</h3>
+      <h3>{status.revalidacaoRecomendada ? 'Nova avaliação recomendada' : 'Revisão em dia'}</h3>
       <p>Snapshot de <strong>{status.snapshot}</strong> · {int.format(status.diasDesdeSnapshot)} dias atrás · ciclo alvo de {status.cicloRetreinoDias} dias · origem dos dados: {status.origemDados}.</p>
       {status.motivos.map(m => <div className="decision-rule" key={m}><span>{m}</span></div>)}
     </div>
     <div className="stats-grid">
-      <StatCard icon={<BrainCircuit/>} label="ROC-AUC risco (holdout)" value={dec.format(status.risco.rocAuc)} detail={status.risco.holdout} tone="violet"/>
+      <StatCard icon={<BarChart3/>} label="ROC-AUC risco (teste)" value={dec.format(status.risco.rocAuc)} detail={status.risco.holdout} tone="navy"/>
       <StatCard icon={<TrendingUp/>} label="MAE volume D+1" value={dec.format(status.volume.maeD1)} detail={`D+7: ${dec.format(status.volume.maeD7)} · ${status.volume.holdout}`} tone="orange"/>
       <StatCard icon={<Radar/>} label="Pior PSI" value={dec.format(drift.piorPsi)} detail="≥ 0,20 indica mudança relevante" tone="red"/>
       <StatCard icon={<Activity/>} label="Volume recente / treino" value={`${dec.format(drift.volumeMedioDia.razao)}×`} detail={`${dec.format(drift.volumeMedioDia.referencia)} → ${dec.format(drift.volumeMedioDia.recente)} elegíveis/dia`} tone="teal"/>
@@ -591,14 +591,14 @@ export default function App() {
 
   return <div className="app-shell">
     <aside className={sidebar ? 'sidebar open' : 'sidebar'}>
-      <div className="brand"><div className="brand-mark"><Activity/></div><div><strong>visionOps <b>AI</b></strong><span>OPERATIONS INTELLIGENCE</span></div><button className="close-menu" onClick={() => setSidebar(false)}><X/></button></div>
+      <div className="brand"><div className="brand-mark"><Activity/></div><div><strong>VisionOps</strong><span>GESTÃO OPERACIONAL</span></div><button className="close-menu" onClick={() => setSidebar(false)}><X/></button></div>
       <nav>{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => { setPage(item.id); setSidebar(false) }}><Icon/><span>{item.label}</span>{page === item.id && <ChevronRight className="chevron"/>}</button> })}</nav>
       <label className="perfil-picker"><span>Perfil operacional</span>
         <select value={perfil} onChange={e => setPerfil(e.target.value as Perfil)}>{PERFIS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
         <small>Visão de trabalho — não é autenticação</small>
       </label>
-      <div className="sidebar-status"><div className="status-dot"/><div><strong>Modelos ativos</strong><span>Snapshot auditável</span></div></div>
-      <div className="sidebar-foot"><ShieldCheck/><span>Validação temporal<br/>Dezembro de 2025</span></div>
+      <div className="sidebar-status"><div className="status-dot"/><div><strong>Dados disponíveis</strong><span>Snapshot auditável</span></div></div>
+      <div className="sidebar-foot"><ShieldCheck/><span>Período de avaliação<br/>Dezembro de 2025</span></div>
     </aside>
     <main>
       <header className="topbar"><button className="menu-button" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><div className="search"><Search/><span>Buscar análise</span><kbd>⌘ K</kbd></div><div className="avatar">{perfil.slice(0, 2).toUpperCase()}</div></div></header>
