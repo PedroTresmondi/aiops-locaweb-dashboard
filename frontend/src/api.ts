@@ -12,7 +12,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new Error(body?.detail ?? `Falha na API (${response.status})`)
+    const detail = body?.detail
+    const message = Array.isArray(detail)
+      ? detail.map((item: { loc?: (string | number)[]; msg?: string }) => `${item.loc?.slice(1).join('.') || 'Dados'}: ${item.msg || 'valor inválido'}`).join('; ')
+      : typeof detail === 'string' ? detail : `Falha na API (${response.status})`
+    throw new Error(message)
   }
   return response.json() as Promise<T>
 }

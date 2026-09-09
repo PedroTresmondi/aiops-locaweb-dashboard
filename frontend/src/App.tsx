@@ -8,23 +8,23 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api, apiUrl } from './api'
+import { api } from './api'
+import { WorkflowProvider, StartPage, WorkQueue, ProductPlan, TeamPlan, ForecastHealth, Explain, ContextNote, fullDate, type Page } from './Workflow'
 import type {
   AdvancedModel, Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
   Perfil, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
 } from './types'
 
-type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'monitor' | 'models' | 'audit'
 
 const nav: { id: Page; label: string; icon: typeof Activity }[] = [
-  { id: 'overview', label: 'Central operacional', icon: CircleGauge },
-  { id: 'queue', label: 'Fila operacional', icon: ListChecks },
-  { id: 'triage', label: 'Avaliação de risco', icon: ShieldCheck },
-  { id: 'diagnostics', label: 'Diagnóstico de OLA', icon: Target },
-  { id: 'optimization', label: 'Alocação de capacidade', icon: SlidersHorizontal },
-  { id: 'capacity', label: 'Simulador de equipe', icon: Users },
-  { id: 'monitor', label: 'Saúde das previsões', icon: Radar },
-  { id: 'models', label: 'Desempenho', icon: BarChart3 },
+  { id: 'overview', label: 'Início', icon: CircleGauge },
+  { id: 'queue', label: 'Revisar chamados', icon: ListChecks },
+  { id: 'triage', label: 'Avaliar novo chamado', icon: ShieldCheck },
+  { id: 'diagnostics', label: 'Analisar problemas', icon: Target },
+  { id: 'optimization', label: 'Revisar produtos', icon: SlidersHorizontal },
+  { id: 'capacity', label: 'Planejar equipe', icon: Users },
+  { id: 'monitor', label: 'Situação dos modelos', icon: Radar },
+  { id: 'models', label: 'Validação dos modelos', icon: BarChart3 },
   { id: 'audit', label: 'Qualidade dos dados', icon: Database },
 ]
 
@@ -51,7 +51,7 @@ const pct = (value: number, digits = 1) => `${(value * 100).toFixed(digits).repl
 const date = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
 
 function Loading({ label = 'Preparando análise operacional' }: { label?: string }) {
-  return <div className="loading"><div className="loader"/><strong>{label}</strong><span>Cálculos executados sobre o snapshot auditado.</span></div>
+  return <div className="loading"><div className="loader"/><strong>{label}</strong><span>Análise da base histórica. Na primeira abertura, o servidor pode levar até um minuto para iniciar.</span></div>
 }
 
 function ErrorState({ message }: { message: string }) {
@@ -76,66 +76,6 @@ function Panel({ title, subtitle, children, className = '' }: { title: string; s
   return <section className={`panel ${className}`}><div className="panel-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div></div>{children}</section>
 }
 
-function OverviewPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
-  const [data, setData] = useState<Overview>()
-  const [status, setStatus] = useState<ModelStatus>()
-  const [error, setError] = useState('')
-  useEffect(() => {
-    api<Overview>('/api/overview').then(setData).catch(e => setError(e.message))
-    api<ModelStatus>('/api/model-status').then(setStatus).catch(() => {})
-  }, [])
-  if (error) return <ErrorState message={error}/>
-  if (!data) return <Loading label="Executando previsões e validações"/>
-  const d1 = data.forecast[0]
-  const d7 = data.forecast[1]
-  const margemD1 = d1.superior / d1.ponto - 1
-  const exigeRevalidacao = status?.revalidacaoRecomendada ?? false
-  return <>
-    <PageTitle eyebrow="Visão executiva" title="Central operacional" copy={`Cenário calculado sobre o snapshot de ${date(data.snapshot.inicio)} a ${date(data.snapshot.fim)}`} actions={<button className="ghost-button"><Clock3 size={16}/> Dados históricos auditados</button>}/>
-    <section className={`executive-brief ${exigeRevalidacao ? 'attention' : ''}`}>
-      <div className="executive-main">
-        <div className="executive-kicker"><span>Decisão D+1</span><b>{exigeRevalidacao ? 'Atenção operacional' : 'Cenário monitorado'}</b></div>
-        <h2>Prepare capacidade para até {int.format(d1.superior)} chamados</h2>
-        <p>O plano-base é de <strong>{int.format(d1.ponto)}</strong>. A faixa superior adiciona <strong>{pct(margemD1)}</strong> de proteção contra incerteza no próximo dia do snapshot.</p>
-        <div className="executive-meta">
-          <span><CheckCircle2/> Método avaliado em período separado</span>
-          <span className={exigeRevalidacao ? 'warning' : ''}><Radar/> {exigeRevalidacao ? 'Revisão necessária antes da automação' : 'Revisão em dia'}</span>
-        </div>
-      </div>
-      <div className="executive-next">
-        <span>Próximos passos</span>
-        <button onClick={() => onNavigate('queue')}><div><small>Analista</small><strong>Trabalhar a fila priorizada</strong><p>Revisar primeiro os {pct(data.risk.filaAlta)} de maior risco.</p></div><ArrowRight/></button>
-        <button onClick={() => onNavigate('monitor')}><div><small>Gestão e qualidade</small><strong>Conferir estabilidade dos dados</strong><p>{exigeRevalidacao ? 'Os dados recentes exigem uma nova avaliação.' : 'A revisão dos dados está em dia.'}</p></div><ArrowRight/></button>
-      </div>
-    </section>
-    <div className="stats-grid">
-      <StatCard icon={<Activity/>} label="Plano-base para D+1" value={int.format(d1.ponto)} detail={`Cenário de segurança: até ${int.format(d1.superior)}`} tone="orange"/>
-      <StatCard icon={<TrendingUp/>} label="Demanda esperada em D+7" value={int.format(d7.ponto)} detail={`Faixa provável: ${int.format(d7.inferior)}–${int.format(d7.superior)}`} tone="teal"/>
-      <StatCard icon={<ShieldCheck/>} label="Risco histórico de violação" value={pct(data.snapshot.taxaOla, 2)} detail={`${int.format(data.snapshot.violacoes)} violações em ${int.format(data.snapshot.elegiveis)} elegíveis`} tone="red"/>
-      <StatCard icon={<Target/>} label="Eficiência da priorização" value={pct(data.risk.captura)} detail={`das violações em apenas ${pct(data.risk.filaAlta)} da fila`} tone="violet"/>
-    </div>
-    <div className="content-grid wide-left">
-      <Panel title="Pulso da operação" subtitle="Volume diário observado nos últimos 120 dias">
-        <div className="chart-lg"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.daily} margin={{ top: 15, right: 10, left: -15, bottom: 0 }}>
-          <defs><linearGradient id="volumeFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#3b82f6" stopOpacity={.3}/><stop offset="1" stopColor="#3b82f6" stopOpacity={0}/></linearGradient></defs>
-          <CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="data" tickFormatter={date} minTickGap={38} axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip labelFormatter={label => date(String(label))} formatter={value => [int.format(Number(value)), 'Incidentes']}/><Area type="monotone" dataKey="incidentes" stroke="#2563eb" strokeWidth={2.4} fill="url(#volumeFill)"/>
-        </AreaChart></ResponsiveContainer></div>
-      </Panel>
-      <Panel title="Fundamentos da recomendação" subtitle="Indicadores usados no planejamento" className="decision-panel">
-        <div className="decision-icon"><ListChecks/></div>
-        <div className="business-reason"><span>01</span><div><strong>Incerteza controlada</strong><p>Erro médio relativo de {pct(data.validation['D+1'].wape)} no teste temporal.</p></div></div>
-        <div className="business-reason"><span>02</span><div><strong>Esforço concentrado</strong><p>A fila de risco entrega lift de {dec.format(data.risk.lift)}×.</p></div></div>
-        <div className="business-reason"><span>03</span><div><strong>Revisão dos dados</strong><p>{exigeRevalidacao ? 'A mudança recente exige nova avaliação antes de automatizar decisões.' : 'Os dados permanecem dentro do ciclo de revisão.'}</p></div></div>
-      </Panel>
-    </div>
-    <Panel title="OLA e volume por mês" subtitle="A taxa considera somente incidentes elegíveis ao KPI">
-      <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={data.monthly} margin={{ top: 15, right: 20, left: -10, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="#223147"/><XAxis dataKey="mes" tickFormatter={date} axisLine={false} tickLine={false}/><YAxis yAxisId="left" axisLine={false} tickLine={false}/><YAxis yAxisId="right" orientation="right" tickFormatter={v => `${Math.round(v * 100)}%`} axisLine={false} tickLine={false}/><Tooltip labelFormatter={label => date(String(label))} formatter={(value, name) => [String(name) === 'Taxa de OLA' ? pct(Number(value)) : int.format(Number(value)), String(name)]}/><Legend/><Bar yAxisId="left" dataKey="incidentes" name="Incidentes" fill="#315a91" radius={[5, 5, 0, 0]}/><Line yAxisId="right" dataKey="taxaOla" name="Taxa de OLA" stroke="#ff7651" strokeWidth={2.5} dot={{ r: 3 }}/>
-      </ComposedChart></ResponsiveContainer></div>
-    </Panel>
-  </>
-}
-
 function TriagePage() {
   const [options, setOptions] = useState<{ produtos: string[]; categorias: string[]; grupos: string[]; ultimaData: string }>()
   const [form, setForm] = useState({ prioridade: 3, produto: '', categoria: '', grupo: '', data: '2026-01-01', hora: '09:00' })
@@ -149,6 +89,7 @@ function TriagePage() {
       setForm(f => ({ ...f, produto: o.produtos.includes('lemn') ? 'lemn' : o.produtos[0], categoria: o.categorias.includes('cat45') ? 'cat45' : o.categorias[0], grupo: o.grupos.includes('Team05') ? 'Team05' : o.grupos[0] }))
     }).catch(e => setError(e.message))
   }, [])
+  useEffect(() => { setResult(undefined) }, [form])
   async function submit(event?: FormEvent) {
     event?.preventDefault(); setLoading(true); setError('')
     try {
@@ -156,23 +97,24 @@ function TriagePage() {
     } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
   return <>
-    <PageTitle eyebrow="Operação diária" title="Avaliação de risco" copy="Estime o risco de violação no momento em que o incidente entra na fila."/>
+    <PageTitle eyebrow="Operação diária" title="Qual é o risco deste chamado?" copy="Informe os dados de abertura para apoiar a revisão de prioridade e encaminhamento."/>
+    <ContextNote>Estimativa individual com o modelo histórico. Alterar os campos limpa a estimativa anterior; clique em Avaliar risco para calcular novamente.</ContextNote>
     <div className="content-grid form-layout">
       <Panel title="Contexto do incidente" subtitle="Somente variáveis conhecidas na abertura">
         {!options ? <Loading label="Carregando valores históricos"/> : <form className="form-grid" onSubmit={submit}>
-          <label><span>Prioridade</span><select value={form.prioridade} onChange={e => setForm({ ...form, prioridade: +e.target.value })}>{[1,2,3,4,5].map(v => <option key={v} value={v}>P{v}</option>)}</select></label>
-          <label><span>Produto</span><select value={form.produto} onChange={e => setForm({ ...form, produto: e.target.value })}>{options.produtos.map(v => <option key={v}>{v}</option>)}</select></label>
-          <label><span>Categoria</span><select value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })}>{options.categorias.map(v => <option key={v}>{v}</option>)}</select></label>
-          <label><span>Grupo designado</span><select value={form.grupo} onChange={e => setForm({ ...form, grupo: e.target.value })}>{options.grupos.map(v => <option key={v}>{v}</option>)}</select></label>
-          <label><span>Data</span><input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })}/></label>
-          <label><span>Hora</span><input type="time" value={form.hora} onChange={e => setForm({ ...form, hora: e.target.value })}/></label>
+          <label><span>Prioridade</span><select disabled={loading} aria-label="Prioridade" value={form.prioridade} onChange={e => setForm({ ...form, prioridade: +e.target.value })}>{[1,2,3,4,5].map(v => <option key={v} value={v}>P{v}</option>)}</select></label>
+          <label><span>Produto</span><select disabled={loading} value={form.produto} onChange={e => setForm({ ...form, produto: e.target.value })}>{options.produtos.map(v => <option key={v}>{v}</option>)}</select></label>
+          <label><span>Categoria</span><select disabled={loading} value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })}>{options.categorias.map(v => <option key={v}>{v}</option>)}</select></label>
+          <label><span>Grupo designado</span><select disabled={loading} value={form.grupo} onChange={e => setForm({ ...form, grupo: e.target.value })}>{options.grupos.map(v => <option key={v}>{v}</option>)}</select></label>
+          <label><span>Data</span><input disabled={loading} type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })}/></label>
+          <label><span>Hora</span><input disabled={loading} type="time" value={form.hora} onChange={e => setForm({ ...form, hora: e.target.value })}/></label>
           <button className="primary-button span-2" disabled={loading}>{loading ? 'Calculando risco…' : <><ShieldCheck size={18}/> Avaliar risco</>}</button>
         </form>}
         {error && <ErrorState message={error}/>} 
       </Panel>
       <section className={`risk-result ${result ? result.faixa.toLowerCase() : ''}`}>
         {!result ? <div className="empty-result"><ShieldCheck/><h2>Aguardando os dados do chamado</h2><p>Preencha o contexto para calcular o risco. A análise usa somente informações disponíveis na abertura.</p></div> : <>
-          <div className="risk-top"><span>Risco calibrado de violação</span><span className="risk-badge">{result.faixa}</span></div>
+          <div className="risk-top"><span>Risco estimado de descumprir o prazo</span><span className="risk-badge">{result.faixa}</span></div>
           <div className="risk-value">{pct(result.probabilidade)}</div>
           <div className="risk-track"><span style={{ width: `${Math.min(100, result.probabilidade * 100)}%` }}/></div>
           <p>{result.acao}</p>
@@ -180,16 +122,16 @@ function TriagePage() {
         </>}
       </section>
     </div>
-    {result && <Panel title="Evidência histórica do contexto" subtitle="Taxas observadas por fator na base elegível">
+    {result && <Explain title="Consultar as taxas históricas do contexto"><Panel title="Evidência histórica" subtitle="Associação histórica; não comprova a causa do atraso.">
       <div className="evidence-grid">{result.evidencias.map(item => <div className="evidence" key={item.fator}><span>{item.fator}</span><strong>{item.taxa == null ? 'Sem amostra' : pct(item.taxa)}</strong><small>{int.format(item.amostra)} incidentes</small></div>)}</div>
-    </Panel>}
+    </Panel></Explain>}
   </>
 }
 
 function SegmentacaoPanel({ dimension }: { dimension: string }) {
   const [data, setData] = useState<Segmentation>()
   const [error, setError] = useState('')
-  useEffect(() => { setData(undefined); api<Segmentation>(`/api/segmentation?dimension=${encodeURIComponent(dimension)}`).then(setData).catch(e => setError(e.message)) }, [dimension])
+  useEffect(() => { let active = true; setData(undefined); setError(''); api<Segmentation>(`/api/segmentation?dimension=${encodeURIComponent(dimension)}`).then(d => { if (active) setData(d) }).catch(e => { if (active) setError(e.message) }); return () => { active = false } }, [dimension])
   if (error) return <ErrorState message={error}/>
   if (!data) return <Panel title="Grupos de criticidade" subtitle="Carregando"><Loading/></Panel>
   return <Panel title="Grupos de criticidade" subtitle={`Agrupamento estatístico com K=${data.kEscolhido}, selecionado por ${data.criterio}`}>
@@ -200,7 +142,7 @@ function SegmentacaoPanel({ dimension }: { dimension: string }) {
         <span>{int.format(c.olaViolados)}</span><span className={c.posicao === 0 ? 'negative' : ''}>{pct(c.taxaMedia)}</span>
       </div>)}
     </div>
-    <div className="insight"><BarChart3 size={18}/><p><strong>Leitura:</strong> o grupo mais crítico costuma ter menor volume e taxa de violação mais alta. A ordenação somente por quantidade não mostra essa diferença.</p></div>
+    <div className="insight"><BarChart3 size={18}/><p><strong>Leitura:</strong> compare a quantidade de casos e a taxa de violação de cada grupo. Uma taxa alta em poucos casos tem significado diferente de um grande volume de atrasos.</p></div>
   </Panel>
 }
 
@@ -208,11 +150,13 @@ function DiagnosticsPage() {
   const [dimension, setDimension] = useState('Categoria')
   const [data, setData] = useState<Diagnostic>()
   const [error, setError] = useState('')
-  useEffect(() => { setData(undefined); api<Diagnostic>(`/api/diagnostics?dimension=${encodeURIComponent(dimension)}&min_sample=30`).then(setData).catch(e => setError(e.message)) }, [dimension])
+  useEffect(() => { let active = true; setData(undefined); setError(''); api<Diagnostic>(`/api/diagnostics?dimension=${encodeURIComponent(dimension)}&min_sample=30`).then(d => { if (active) setData(d) }).catch(e => { if (active) setError(e.message) }); return () => { active = false } }, [dimension])
   return <>
-    <PageTitle eyebrow="Análise operacional" title="Diagnóstico de OLA" copy="Priorize onde o volume de violações e a taxa de risco realmente se concentram." actions={<div className="segmented">{['Categoria','Produto','Grupo designado'].map(v => <button className={dimension === v ? 'active' : ''} onClick={() => setDimension(v)} key={v}>{v === 'Grupo designado' ? 'Grupo' : v}</button>)}</div>}/>
+    <PageTitle eyebrow="Análise operacional" title="Onde os atrasos se concentram?" copy="Compare os grupos com mais descumprimentos do prazo interno de atendimento (OLA)." actions={<div className="segmented">{['Categoria','Produto','Grupo designado'].map(v => <button className={dimension === v ? 'active' : ''} onClick={() => setDimension(v)} key={v}>{v === 'Grupo designado' ? 'Grupo' : v}</button>)}</div>}/>
+    <ContextNote>Análise do histórico completo, de 02/01/2023 a 31/12/2025. Não segue o filtro da fila. Os códigos são os identificadores fornecidos na base.</ContextNote>
+    {data?.items[0] && <section className="decision-hero compact"><span className="eyebrow">Ponto de partida para investigação</span><h2>Investigue {data.items[0].nome}</h2><p>Este item concentra {int.format(data.items[0].violacoes)} descumprimentos em {int.format(data.items[0].elegiveis)} chamados elegíveis ({pct(data.items[0].taxa)}). Confira os casos recorrentes com o grupo responsável e identifique impedimentos no atendimento.</p></section>}
     {error ? <ErrorState message={error}/> : !data ? <Loading/> : <div className="content-grid wide-left">
-      <Panel title={`Maiores ofensores por ${dimension.toLowerCase()}`} subtitle="Barras = violações · linha de referência = taxa geral">
+      <Panel title={`Mais atrasos por ${dimension.toLowerCase()}`} subtitle="Quantidade de descumprimentos. Compare a taxa no quadro ao lado para considerar o tamanho de cada grupo.">
         <div className="chart-xl"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.items.slice(0, 10)} layout="vertical" margin={{ left: 5, right: 20, top: 5, bottom: 5 }}>
           <CartesianGrid horizontal={false} stroke="#e7edf4"/><XAxis type="number" axisLine={false} tickLine={false}/><YAxis type="category" dataKey="nome" width={90} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}/><Tooltip formatter={value => int.format(Number(value))}/><Bar dataKey="violacoes" name="Violações" radius={[0, 6, 6, 0]}>{data.items.slice(0,10).map((_, i) => <Cell key={i} fill={i < 3 ? '#ef6236' : '#274c77'}/>)}</Bar>
         </BarChart></ResponsiveContainer></div>
@@ -222,37 +166,7 @@ function DiagnosticsPage() {
         <div className="insight"><BarChart3 size={18}/><p><strong>Prioridade sugerida:</strong> comece pelos itens com mais violações. Use a taxa para identificar casos em que o risco permanece alto mesmo com menor volume.</p></div>
       </Panel>
     </div>}
-    <SegmentacaoPanel dimension={dimension}/>
-  </>
-}
-
-function CapacityPage() {
-  const [form, setForm] = useState({ produtividade: 25, ocupacao: 80, indisponibilidade: 10, analistas_atuais: 40, horizonte: 'D+1' })
-  const [data, setData] = useState<Capacity>()
-  const [error, setError] = useState('')
-  async function submit(event?: FormEvent) {
-    event?.preventDefault(); setError('')
-    try { setData(await api<Capacity>('/api/capacity', { method: 'POST', body: JSON.stringify({ ...form, ocupacao: form.ocupacao / 100, indisponibilidade: form.indisponibilidade / 100 }) })) } catch (e) { setError((e as Error).message) }
-  }
-  useEffect(() => { submit() }, [])
-  return <>
-    <PageTitle eyebrow="Planejamento de equipe" title="Simulador de capacidade" copy="Converta a previsão de demanda em uma decisão de escala operacional."/>
-    <div className="content-grid form-layout">
-      <Panel title="Premissas operacionais" subtitle="Parâmetros ajustáveis e explicitamente separados do modelo">
-        <form className="form-grid" onSubmit={submit}>
-          <label><span>Horizonte</span><select value={form.horizonte} onChange={e => setForm({ ...form, horizonte: e.target.value })}><option>D+1</option><option>D+7</option></select></label>
-          <label><span>Analistas atuais</span><input type="number" min="0" value={form.analistas_atuais} onChange={e => setForm({ ...form, analistas_atuais: +e.target.value })}/></label>
-          <label><span>Incidentes / analista / dia</span><input type="number" min="1" value={form.produtividade} onChange={e => setForm({ ...form, produtividade: +e.target.value })}/></label>
-          <label><span>Ocupação planejada (%)</span><input type="number" min="10" max="100" value={form.ocupacao} onChange={e => setForm({ ...form, ocupacao: +e.target.value })}/></label>
-          <label><span>Margem de indisponibilidade (%)</span><input type="number" min="0" max="89" value={form.indisponibilidade} onChange={e => setForm({ ...form, indisponibilidade: +e.target.value })}/></label>
-          <button className="primary-button span-2"><Users size={18}/> Recalcular capacidade</button>
-        </form>{error && <ErrorState message={error}/>} 
-      </Panel>
-      <Panel title="Cobertura por cenário" subtitle={data ? `Capacidade efetiva: ${dec.format(data.capacidadeEfetiva)} incidentes/analista` : 'Calculando'}>
-        {!data ? <Loading/> : <><div className="chart-md"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.cenarios} margin={{ left: -10, right: 10, top: 20 }}><CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="cenario" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip/><Bar dataKey="necessarios" name="Analistas necessários" radius={[7,7,0,0]}>{data.cenarios.map((s, i) => <Cell key={s.cenario} fill={i === 2 ? '#ef6236' : i === 1 ? '#2563eb' : '#93b4e9'}/>)}</Bar><ReferenceLine y={form.analistas_atuais} stroke="#0f9f91" strokeDasharray="5 5" label="Equipe atual"/></BarChart></ResponsiveContainer></div><div className="capacity-callout"><CheckCircle2/><div><strong>{data.acao}</strong><p>{data.nota}</p></div></div></>}
-      </Panel>
-    </div>
-    {data && <div className="scenario-grid">{data.cenarios.map(s => <article key={s.cenario}><span>{s.cenario}</span><strong>{int.format(s.demanda)} chamados</strong><p>{s.necessarios} analistas · <b className={s.gap > 0 ? 'negative' : 'positive'}>{s.gap > 0 ? `déficit ${s.gap}` : `reserva ${Math.abs(s.gap)}`}</b></p></article>)}</div>}
+    <Explain title="Explorar agrupamentos estatísticos"><SegmentacaoPanel dimension={dimension}/></Explain>
   </>
 }
 
@@ -289,7 +203,7 @@ function AdvancedModelPanel() {
       </BarChart></ResponsiveContainer></div>
     </div>
     <div className="method-note"><ShieldCheck/><p>
-      <strong>Extensão em validação — não substitui o ensemble operacional publicado.</strong> Adiciona: feriados nacionais do Brasil (fatos de calendário; {data.feriados.length} no período), perda de Poisson (respeita contagem), pesos por recência e um backtest de origem móvel com {m.nPontos} previsões diárias em vez do holdout único de dezembro. Ganha do baseline linear e empata com o ensemble operacional; o diferencial é antecipar a queda em feriados — a previsão de 01/01 cai para {int.format(data.previsoes.find(x => x.horizonte === 'D+1')!.ponto)} (alvo é feriado).
+      <strong>Extensão em validação — não substitui o ensemble operacional publicado.</strong> Adiciona: feriados nacionais do Brasil (fatos de calendário; {data.feriados.length} no período), perda de Poisson (respeita contagem), pesos por recência e um backtest de origem móvel com {m.nPontos} previsões diárias em vez do holdout único de dezembro. Compare os ganhos medidos nos cartões acima. A previsão considera o calendário de feriados — a estimativa para 01/01 é {int.format(data.previsoes.find(x => x.horizonte === 'D+1')!.ponto)} (alvo é feriado).
     </p></div>
   </Panel>
 }
@@ -301,10 +215,10 @@ function ModelsPage() {
   if (error) return <ErrorState message={error}/>
   if (!data) return <Loading label="Carregando validação temporal"/>
   return <>
-    <PageTitle eyebrow="Validação das previsões" title="Desempenho" copy="Resultados em período separado, calibração do risco e variáveis usadas no cálculo."/>
+    <PageTitle eyebrow="Validação das previsões" title="Validação dos modelos" copy="Resultados em período separado, calibração do risco e variáveis usadas no cálculo."/>
     <div className="stats-grid">
-      <StatCard icon={<BarChart3/>} label="ROC-AUC risco" value={dec.format(data.risk.rocAuc)} detail="Discriminação no período de teste" tone="navy"/>
-      <StatCard icon={<Target/>} label="PR-AUC risco" value={dec.format(data.risk.prAuc)} detail={`Base positiva: ${pct(data.risk.prevalencia)}`} tone="orange"/>
+      <StatCard icon={<BarChart3/>} label="ROC-AUC risco" value={data.risk.rocAuc.toFixed(3)} detail="Discriminação no período de teste" tone="navy"/>
+      <StatCard icon={<Target/>} label="PR-AUC risco" value={data.risk.prAuc.toFixed(3)} detail={`Base positiva: ${pct(data.risk.prevalencia)}`} tone="orange"/>
       <StatCard icon={<ShieldCheck/>} label="Captura de violações" value={pct(data.risk.captura)} detail={`Com ${pct(data.risk.filaAlta)} dos casos`} tone="teal"/>
       <StatCard icon={<TrendingUp/>} label="Lift da fila" value={`${dec.format(data.risk.lift)}×`} detail={`Precisão: ${pct(data.risk.precisaoFila)}`} tone="red"/>
     </div>
@@ -340,270 +254,60 @@ function AuditPage() {
   </>
 }
 
-const FAIXA_CLASSE: Record<string, string> = { Alto: 'alto', Moderado: 'moderado', Baixo: 'baixo' }
-const RECOMENDACAO_FILA: Record<string, string> = { Alto: 'Escalar agora', Moderado: 'Priorizar hoje', Baixo: 'Acompanhar' }
-const ACAO_LABEL: Record<string, string> = { atribuido: 'Atribuir', escalado: 'Escalar', resolvido: 'Marcar resolvido', dispensado: 'Dispensar' }
-const parseCsv = (texto: string): Record<string, string>[] => {
-  const linhas = texto.trim().split(/\r?\n/).filter(Boolean)
-  if (linhas.length < 2) return []
-  const cabecalho = linhas[0].split(',').map(c => c.trim())
-  return linhas.slice(1).map(linha => {
-    const celulas = linha.split(',')
-    return Object.fromEntries(cabecalho.map((coluna, i) => [coluna, (celulas[i] ?? '').trim()]))
-  })
-}
-
-function FilaRow({ item, perfil, loteId, onAction }: { item: ItemFila; perfil: Perfil; loteId?: string | null; onAction: (t: string) => void }) {
-  const [aberto, setAberto] = useState(false)
-  const [registrada, setRegistrada] = useState<string>()
-  const podeAgir = perfil !== 'gestor'
-  async function registrar(acao: string) {
-    try {
-      await api('/api/actions', { method: 'POST', body: JSON.stringify({ ticketRef: item.id, acao, loteId, prioridade: item.prioridade, faixa: item.faixa, probabilidade: item.probabilidade, perfil }) })
-      setRegistrada(acao); onAction(acao)
-    } catch { setRegistrada('erro') }
-  }
-  return <>
-    <tr className={`fila-row ${aberto ? 'open' : ''}`} onClick={() => setAberto(v => !v)}>
-      <td><div className="risk-cell"><span className={`risk-pill ${FAIXA_CLASSE[item.faixa]}`}>{pct(item.probabilidade)}</span><small>{item.faixa}</small></div></td>
-      <td className="mono">{item.id}</td>
-      <td>P{item.prioridade}</td>
-      <td><div className="entity-cell"><strong>{item.produto}</strong><small>{item.categoria}</small></div></td>
-      <td>{item.grupo}</td>
-      <td><span className={`next-action ${FAIXA_CLASSE[item.faixa]}`}>{RECOMENDACAO_FILA[item.faixa]}</span></td>
-      <td>{item.violouReal === undefined ? '—' : item.violouReal ? <span className="rate bad">violou</span> : 'ok'}</td>
-      <td>{registrada && registrada !== 'erro' ? <span className="rate">{registrada}</span> : <ChevronRight className={aberto ? 'chevron open' : 'chevron'}/>}</td>
-    </tr>
-    {aberto && <tr className="fila-detalhe"><td colSpan={8}>
-      <div className="fatores">
-        {item.fatores.map(f => <div key={f.fator} className="fator">
-          <span>{f.fator}: <b>{f.valor}</b></span>
-          <span className={f.contribuicao >= 0 ? 'delta up' : 'delta down'}>{f.contribuicao >= 0 ? '+' : ''}{(f.contribuicao * 100).toFixed(1)} pp no risco</span>
-          <small>{f.taxaHistorica == null ? 'sem amostra histórica' : `taxa histórica ${pct(f.taxaHistorica)} · ${int.format(f.amostra)} casos`}</small>
-        </div>)}
-      </div>
-      {podeAgir && <div className="fila-acoes">
-        {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <button key={a} onClick={e => { e.stopPropagation(); registrar(a) }}>{ACAO_LABEL[a]}</button>)}
-      </div>}
-      {!podeAgir && <p className="fila-nota">Perfil Gestor: visão de acompanhamento, sem registro de ação.</p>}
-    </td></tr>}
-  </>
-}
-
-function QueuePage({ perfil }: { perfil: Perfil }) {
-  const [modo, setModo] = useState<'snapshot' | 'csv'>('snapshot')
-  const [data, setData] = useState('2025-12-31')
-  const [dias, setDias] = useState(1)
-  const [resposta, setResposta] = useState<RespostaFila>()
-  const [resumoAcoes, setResumoAcoes] = useState<ResumoAcoes>()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  const recarregarAcoes = () => { api<ResumoAcoes>('/api/actions/summary').then(setResumoAcoes).catch(() => {}) }
-  useEffect(recarregarAcoes, [])
-
-  async function carregarSnapshot() {
-    setLoading(true); setError('')
-    try { setResposta(await api<RespostaFila>(`/api/queue/sample?data=${data}&dias=${dias}`)) }
-    catch (e) { setError((e as Error).message); setResposta(undefined) } finally { setLoading(false) }
-  }
-  useEffect(() => { if (modo === 'snapshot') carregarSnapshot() }, [modo])
-
-  async function enviarCsv(file: File) {
-    setLoading(true); setError('')
-    try {
-      const linhas = parseCsv(await file.text())
-      if (!linhas.length) throw new Error('CSV vazio ou sem linhas de dados.')
-      const itens = linhas.map(l => ({
-        id: l.id || l.numero || l.Numero, prioridade: Number(l.prioridade || l.Prioridade || 3),
-        produto: l.produto || l.Produto || 'Não informado', categoria: l.categoria || l.Categoria || 'Não informado',
-        grupo: l.grupo || l.Grupo || 'Não informado', dataHora: l.dataHora || l.data_hora || l.aberto || null,
-      }))
-      setResposta(await api<RespostaFila>('/api/queue/score', { method: 'POST', body: JSON.stringify({ itens, referencia: file.name, persistir: true }) }))
-    } catch (e) { setError((e as Error).message); setResposta(undefined) } finally { setLoading(false) }
-  }
-
-  function exportar() {
-    if (!resposta) return
-    const linhas = [['id', 'faixa', 'probabilidade', 'prioridade', 'produto', 'categoria', 'grupo', 'aberto'].join(',')]
-    resposta.fila.forEach(i => linhas.push([i.id, i.faixa, i.probabilidade, i.prioridade, i.produto, i.categoria, i.grupo, i.aberto].join(',')))
-    const url = URL.createObjectURL(new Blob([linhas.join('\n')], { type: 'text/csv' }))
-    const a = document.createElement('a'); a.href = url; a.download = 'fila_priorizada.csv'; a.click(); URL.revokeObjectURL(url)
-  }
-
-  const r = resposta?.resumo
-  return <>
-    <PageTitle eyebrow="Priorização diária" title="Fila operacional" copy="Avalie um lote de chamados, ordene por risco de violação e registre as ações da operação." actions={
-      resposta && <button className="ghost-button" onClick={exportar}><ArrowRight size={15}/> Exportar fila (.csv)</button>
-    }/>
-    <div className="segmented queue-modes">
-      <button className={modo === 'snapshot' ? 'active' : ''} onClick={() => setModo('snapshot')}>Do snapshot</button>
-      <button className={modo === 'csv' ? 'active' : ''} onClick={() => setModo('csv')}>Importar CSV</button>
-    </div>
-
-    {modo === 'snapshot'
-      ? <Panel title="Chamados de um dia real da base" subtitle="Incidentes elegíveis abertos na janela escolhida, pontuados com o modelo de risco validado">
-          <div className="queue-controls">
-            <label><span>Data</span><input type="date" value={data} min="2023-01-02" max="2025-12-31" onChange={e => setData(e.target.value)}/></label>
-            <label><span>Janela (dias)</span><input type="number" min={1} max={14} value={dias} onChange={e => setDias(Math.max(1, Math.min(14, +e.target.value)))}/></label>
-            <button className="primary-button" onClick={carregarSnapshot} disabled={loading}>{loading ? 'Pontuando…' : 'Carregar fila'}</button>
-          </div>
-          {resposta?.janelaModelo && <p className="fila-nota">Janela do modelo: {resposta.janelaModelo}. O campo “violou” é o resultado real do incidente — não estava disponível na abertura, serve só para conferir a ordenação.</p>}
-        </Panel>
-      : <Panel title="Importar CSV de chamados" subtitle="Colunas: id, prioridade, produto, categoria, grupo, dataHora">
-          <div className="queue-controls">
-            <label className="file-drop"><UploadCloud size={18}/><span>Selecionar arquivo .csv</span>
-              <input type="file" accept=".csv,text/csv" onChange={e => { const f = e.target.files?.[0]; if (f) enviarCsv(f) }}/>
-            </label>
-            <a className="ghost-button" href={apiUrl('/api/queue/template')} download="modelo_fila.csv"><ArrowRight size={15}/> Baixar modelo</a>
-          </div>
-        </Panel>}
-
-    {error && <ErrorState message={error}/>}
-    {loading && !resposta && <Loading label="Pontuando o lote"/>}
-
-    {r && <>
-      <div className="stats-grid">
-        <StatCard icon={<ListChecks/>} label="Chamados na fila" value={int.format(r.total)} detail={`${int.format(r.filaAlta)} em risco alto · ${int.format(r.filaModerada)} moderado`} tone="navy"/>
-        <StatCard icon={<AlertTriangle/>} label="Violações esperadas" value={dec.format(r.violacoesEsperadas)} detail="Soma das probabilidades calibradas do lote" tone="red"/>
-        <StatCard icon={<Target/>} label="Captura no topo 20%" value={pct(r.capturaTop20Pct)} detail="Do risco total, quanto está nos primeiros 20% da fila" tone="teal"/>
-        <StatCard icon={<CheckCircle2/>} label="Ações registradas" value={resumoAcoes ? int.format(resumoAcoes.ticketsComAcao) : '—'} detail={resumoAcoes ? `${dec.format(resumoAcoes.riscoPriorizado)} de risco já endereçado` : 'Sem ações ainda'} tone="violet"/>
-      </div>
-      <section className="queue-brief">
-        <div className="queue-brief-copy"><span>Leitura para decisão</span><h2>Comece pelos {int.format(Math.ceil(r.total * .2))} chamados do topo</h2><p>Esse grupo concentra <strong>{pct(r.capturaTop20Pct)}</strong> do risco previsto. A sequência abaixo transforma o score em uma rotina simples de operação.</p></div>
-        <div className="queue-action-lanes">
-          <div className="lane high"><span>Agora</span><strong>Escalar {int.format(r.filaAlta)}</strong><p>Risco alto · direcionar para atendimento especializado.</p></div>
-          <div className="lane medium"><span>Hoje</span><strong>Priorizar {int.format(r.filaModerada)}</strong><p>Risco moderado · atribuir e acompanhar prazo.</p></div>
-          <div className="lane low"><span>Rotina</span><strong>Acompanhar {int.format(r.total - r.filaAlta - r.filaModerada)}</strong><p>Risco baixo · manter na fila padrão.</p></div>
-        </div>
-      </section>
-      {r.violacoesReais !== undefined && <div className="insight"><BarChart3 size={18}/><p><strong>Conferência:</strong> neste dia ocorreram {int.format(r.violacoesReais)} violações de OLA. A fila posicionou {int.format(r.violacoesReaisNoTop20 ?? 0)} delas nos primeiros 20%.</p></div>}
-
-      <Panel title="Fila priorizada" subtitle="Clique numa linha para ver a contribuição de cada fator e registrar ação">
-        <div className="data-table-wrap">
-          <table className="fila-table">
-            <thead><tr><th>Risco</th><th>Chamado</th><th>Pri.</th><th>Produto / categoria</th><th>Grupo</th><th>Próxima ação</th><th>Resultado</th><th></th></tr></thead>
-            <tbody>{resposta!.fila.map(item => <FilaRow key={item.id} item={item} perfil={perfil} loteId={resposta!.loteId} onAction={recarregarAcoes}/>)}</tbody>
-          </table>
-        </div>
-      </Panel>
-
-      {resumoAcoes && <Panel title="Registro de ações" subtitle="Estado operacional persistido — não é contagem de violações evitadas, e sim de risco endereçado">
-        <div className="scenario-grid">
-          {['atribuido', 'escalado', 'resolvido', 'dispensado'].map(a => <article key={a}><span>{a}</span><strong>{int.format(resumoAcoes.porAcao[a] ?? 0)}</strong><p>chamados</p></article>)}
-        </div>
-      </Panel>}
-    </>}
-  </>
-}
-
-function OptimizationPage() {
-  const [capacidade, setCapacidade] = useState(5)
-  const [limite, setLimite] = useState(2)
-  const [data, setData] = useState<Optimization>()
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  async function calcular() {
-    setLoading(true); setError('')
-    try { setData(await api<Optimization>(`/api/optimization?capacidade=${capacidade}&limitePorCategoria=${limite}`)) }
-    catch (e) { setError((e as Error).message) } finally { setLoading(false) }
-  }
-  useEffect(() => { calcular() }, [])
-  return <>
-    <PageTitle eyebrow="Planejamento de capacidade" title="Alocação de capacidade D+1" copy="Indique quais produtos revisar no próximo dia para cobrir a maior parcela do risco de OLA."/>
-    <div className="content-grid form-layout">
-      <Panel title="Parâmetros do modelo" subtitle="Capacidade e limite por categoria — calibráveis com a operação real">
-        <form className="form-grid" onSubmit={e => { e.preventDefault(); calcular() }}>
-          <label><span>Capacidade (produtos/dia)</span><input type="number" min={1} max={60} value={capacidade} onChange={e => setCapacidade(+e.target.value)}/></label>
-          <label><span>Máx. por categoria dominante</span><input type="number" min={1} max={12} value={limite} onChange={e => setLimite(+e.target.value)}/></label>
-          <button className="primary-button span-2" disabled={loading}><SlidersHorizontal size={16}/> {loading ? 'Otimizando…' : 'Recalcular alocação'}</button>
-        </form>
-        {error && <ErrorState message={error}/>}
-        {data && <div className="method-note"><ShieldCheck/><p>Objetivo: previsão real de volume D+1 ({dec.format(data.previsaoD1Total)}) distribuída pelos produtos conforme a participação histórica nas violações. Preço-sombra: <strong>{dec.format(data.precoSombra)}</strong> violações por vaga extra.</p></div>}
-      </Panel>
-      <Panel title="Cobertura de risco" subtitle={data ? `${pct(data.coberturaPct / 100)} do risco estimado coberto por ${data.selecionados.length} produto(s)` : 'Calculando'}>
-        {!data ? <Loading/> : <>
-          <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.sensibilidade} margin={{ left: -12, right: 10, top: 15 }}>
-            <CartesianGrid vertical={false} stroke="#e7edf4"/><XAxis dataKey="capacidade" axisLine={false} tickLine={false}/><YAxis tickFormatter={v => `${Math.round(v)}%`} axisLine={false} tickLine={false}/><Tooltip formatter={(v, n) => n === 'pctDoTotal' ? [`${v}%`, 'Cobertura'] : [dec.format(Number(v)), 'Risco coberto']}/>
-            <Bar dataKey="pctDoTotal" name="pctDoTotal" radius={[6, 6, 0, 0]}>{data.sensibilidade.map(s => <Cell key={s.capacidade} fill={s.capacidade === data.capacidade ? '#ef6236' : '#274c77'}/>)}</Bar>
-          </BarChart></ResponsiveContainer></div>
-          <div className="action-list">{data.selecionados.map((s, i) => <div className="action-item" key={s.produto}><span className="rank">{i + 1}</span><div><strong>{s.produto}</strong><small>categoria {s.categoriaDominante}</small></div><div className="rate">{dec.format(s.cargaEstimadaD1)}</div></div>)}</div>
-        </>}
-      </Panel>
-    </div>
-  </>
-}
-
-function MonitorPage() {
-  const [status, setStatus] = useState<ModelStatus>()
-  const [drift, setDrift] = useState<Drift>()
-  const [error, setError] = useState('')
-  useEffect(() => {
-    api<ModelStatus>('/api/model-status').then(setStatus).catch(e => setError(e.message))
-    api<Drift>('/api/drift').then(setDrift).catch(e => setError(e.message))
-  }, [])
-  if (error) return <ErrorState message={error}/>
-  if (!status || !drift) return <Loading label="Comparando janelas de dados"/>
-  const nivelClasse: Record<string, string> = { 'estável': 'positive', 'atenção': '', 'alto': 'negative' }
-  return <>
-    <PageTitle eyebrow="Acompanhamento estatístico" title="Saúde das previsões" copy="Compare os dados de referência com o período recente e identifique quando uma nova avaliação é necessária."/>
-    <div className={`decision-panel panel ${status.revalidacaoRecomendada ? 'alerta' : ''}`}>
-      <div className="decision-icon"><Radar/></div>
-      <h3>{status.revalidacaoRecomendada ? 'Nova avaliação recomendada' : 'Revisão em dia'}</h3>
-      <p>Snapshot de <strong>{status.snapshot}</strong> · {int.format(status.diasDesdeSnapshot)} dias atrás · ciclo alvo de {status.cicloRetreinoDias} dias · origem dos dados: {status.origemDados}.</p>
-      {status.motivos.map(m => <div className="decision-rule" key={m}><span>{m}</span></div>)}
-    </div>
-    <div className="stats-grid">
-      <StatCard icon={<BarChart3/>} label="ROC-AUC risco (teste)" value={dec.format(status.risco.rocAuc)} detail={status.risco.holdout} tone="navy"/>
-      <StatCard icon={<TrendingUp/>} label="MAE volume D+1" value={dec.format(status.volume.maeD1)} detail={`D+7: ${dec.format(status.volume.maeD7)} · ${status.volume.holdout}`} tone="orange"/>
-      <StatCard icon={<Radar/>} label="Pior PSI" value={dec.format(drift.piorPsi)} detail="≥ 0,20 indica mudança relevante" tone="red"/>
-      <StatCard icon={<Activity/>} label="Volume recente / treino" value={`${dec.format(drift.volumeMedioDia.razao)}×`} detail={`${dec.format(drift.volumeMedioDia.referencia)} → ${dec.format(drift.volumeMedioDia.recente)} elegíveis/dia`} tone="teal"/>
-    </div>
-    <Panel title="Deriva por variável (PSI)" subtitle={`Referência: ${drift.janelaReferencia.inicio} a ${drift.janelaReferencia.fim} · recente: ${drift.janelaRecente.inicio} a ${drift.janelaRecente.fim}`}>
-      <div className="model-table">
-        <div className="table-row table-head"><span>Variável</span><span>PSI</span><span>Nível</span><span>Faixa mais deslocada</span><span></span></div>
-        {drift.features.map(f => <div className="table-row" key={f.feature}>
-          <strong>{f.feature}</strong><span>{dec.format(f.psi)}</span>
-          <span className={nivelClasse[f.nivel]}>{f.nivel}</span>
-          <span>{f.detalhe[0] ? `${f.detalhe[0].faixa} (${pct(f.detalhe[0].esperado)} → ${pct(f.detalhe[0].atual)})` : '—'}</span><span></span>
-        </div>)}
-      </div>
-      <div className="method-note"><ShieldCheck/><p>PSI (Population Stability Index) calculado sobre o snapshot real. A quebra de regime de volume em setembro/2025 aparece aqui como PSI alto em “Volume diário” — é a mesma limitação já documentada na Sprint 3, agora quantificada.</p></div>
-    </Panel>
-  </>
-}
-
-export default function App() {
-  const [page, setPage] = useState<Page>('overview')
+function AppShell() {
+  const route = (): Page => nav.some(n => n.id === window.location.hash.slice(1)) ? window.location.hash.slice(1) as Page : 'overview'
+  const [page, setPage] = useState<Page>(route)
   const [sidebar, setSidebar] = useState(false)
   const [perfil, setPerfil] = usePerfil()
-  const current = useMemo(() => nav.find(item => item.id === page)!, [page])
-
-  const workspace = page === 'queue' ? <QueuePage perfil={perfil}/>
-    : page === 'overview' ? <OverviewPage onNavigate={setPage}/>
+  const [help, setHelp] = useState(false)
+  const current = nav.find(item => item.id === page)!
+  const navigate = (target: Page) => {
+    window.location.hash = target
+    setPage(target); setSidebar(false); setHelp(false)
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+  useEffect(() => {
+    const changed = () => { setPage(route()); setSidebar(false); setHelp(false); window.scrollTo(0, 0) }
+    window.addEventListener('hashchange', changed)
+    return () => window.removeEventListener('hashchange', changed)
+  }, [])
+  const workspace = page === 'queue' ? <WorkQueue perfil={perfil} navigate={navigate}/>
+    : page === 'overview' ? <StartPage navigate={navigate}/>
     : page === 'triage' ? <TriagePage/>
     : page === 'diagnostics' ? <DiagnosticsPage/>
-    : page === 'optimization' ? <OptimizationPage/>
-    : page === 'capacity' ? <CapacityPage/>
-    : page === 'monitor' ? <MonitorPage/>
+    : page === 'optimization' ? <ProductPlan navigate={navigate}/>
+    : page === 'capacity' ? <TeamPlan navigate={navigate}/>
+    : page === 'monitor' ? <ForecastHealth/>
     : page === 'models' ? <ModelsPage/>
     : <AuditPage/>
-
+  const navButton = (id: Page) => {
+    const item = nav.find(n => n.id === id)!; const Icon = item.icon
+    return <button key={id} aria-current={page === id ? 'page' : undefined} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon/><span>{item.label}</span>{page === id && <ChevronRight className="chevron"/>}</button>
+  }
   return <div className="app-shell">
+    <a className="skip-link" href="#main-content" onClick={e => { e.preventDefault(); document.getElementById('main-content')?.focus() }}>Ir para o conteúdo</a>
     <aside className={sidebar ? 'sidebar open' : 'sidebar'}>
-      <div className="brand"><div className="brand-mark"><Activity/></div><div><strong>VisionOps</strong><span>GESTÃO OPERACIONAL</span></div><button className="close-menu" onClick={() => setSidebar(false)}><X/></button></div>
-      <nav>{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => { setPage(item.id); setSidebar(false) }}><Icon/><span>{item.label}</span>{page === item.id && <ChevronRight className="chevron"/>}</button> })}</nav>
-      <label className="perfil-picker"><span>Perfil operacional</span>
-        <select value={perfil} onChange={e => setPerfil(e.target.value as Perfil)}>{PERFIS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
-        <small>Visão de trabalho — não é autenticação</small>
-      </label>
-      <div className="sidebar-status"><div className="status-dot"/><div><strong>Dados disponíveis</strong><span>Snapshot auditável</span></div></div>
-      <div className="sidebar-foot"><ShieldCheck/><span>Período de avaliação<br/>Dezembro de 2025</span></div>
+      <div className="brand"><div className="brand-mark"><Activity/></div><div><strong>VisionOps</strong><span>GESTÃO OPERACIONAL</span></div><button className="close-menu" aria-label="Fechar menu" onClick={() => setSidebar(false)}><X/></button></div>
+      <nav aria-label="Navegação principal">
+        {navButton('overview')}
+        <span className="nav-section">Atendimento</span>{navButton('queue')}
+        <span className="nav-section">Planejamento</span>{navButton('capacity')}{navButton('optimization')}
+        <span className="nav-section">Investigação</span>{navButton('diagnostics')}
+        <details className="technical-nav" open={['monitor', 'models', 'audit'].includes(page) || undefined}><summary>Dados e modelos</summary>{navButton('monitor')}{navButton('models')}{navButton('audit')}</details>
+      </nav>
+      <label className="perfil-picker"><span>Perfil de demonstração</span><select value={perfil} onChange={e => setPerfil(e.target.value as Perfil)}>{PERFIS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select><small>Visão de trabalho, sem autenticação.</small></label>
+      <div className="sidebar-status"><Database size={18}/><div><strong>Base histórica</strong><span>Jan/2023 a dez/2025</span></div></div>
     </aside>
-    <main>
-      <header className="topbar"><button className="menu-button" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><div className="search"><Search/><span>Buscar análise</span><kbd>⌘ K</kbd></div><div className="avatar">{perfil.slice(0, 2).toUpperCase()}</div></div></header>
-      <div className="workspace">{workspace}</div>
+    <main id="main-content" tabIndex={-1}>
+      <header className="topbar"><button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><span className="history-badge">Exercício com dados históricos</span><button className="ghost-button" aria-expanded={help} onClick={() => setHelp(v => !v)}>Como usar</button></div></header>
+      <div className="workspace">
+        {help && <section className="usage-guide"><h2>Do risco ao encaminhamento</h2><ol><li>Abra <strong>Revisar chamados</strong> e escolha o período.</li><li>Filtre o risco e selecione um chamado na lista.</li><li>Confira a recomendação e registre sua decisão no painel ao lado.</li></ol><p><strong>OLA</strong> é o prazo interno de atendimento definido na base. <strong>Risco</strong> é uma estimativa de descumprimento, não um atraso confirmado. O registro fica no VisionOps e não aciona um sistema externo.</p><button className="text-button" onClick={() => setHelp(false)}>Fechar orientações</button></section>}
+        {workspace}
+      </div>
     </main>
     {sidebar && <div className="scrim" onClick={() => setSidebar(false)}/>}
   </div>
+}
+export default function App() {
+  return <WorkflowProvider><AppShell/></WorkflowProvider>
 }
