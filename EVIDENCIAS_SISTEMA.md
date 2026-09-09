@@ -140,9 +140,9 @@ modelo de risco validado e ordena por probabilidade. Cada chamado abre a contrib
 cada fator (delta do próprio modelo + taxa histórica). Ações (atribuído/escalado/resolvido/
 dispensado) persistem em SQLite.
 
-Exemplo — **18/11/2025**: 61 chamados · 14 em risco alto · 8,4 violações esperadas (soma das
-probabilidades) · **56,1% do risco esperado nos 20% do topo da fila** (13 chamados) · conferência
-com o real: das 5 violações de OLA do dia, **4 caem nesses primeiros 20%**.
+Exemplo — **18/11/2025**: 61 chamados · 8 em risco alto · 6,2 violações esperadas (soma das
+probabilidades) · **63,4% do risco esperado nos 20% do topo da fila** (13 chamados) · conferência
+com o real: das 5 violações de OLA do dia, **3 caem nesses primeiros 20%**.
 
 ### Alocação preventiva — MILP (Seção 18 do notebook de ML)
 Programação linear inteira via `scipy.optimize.milp`. Com capacidade de 5 produtos/dia:
@@ -157,7 +157,7 @@ A ordenação simples por soma não separa isso.
 ### Monitor de deriva de dados (PSI)
 Compara a janela de treino do classificador com os últimos 30 dias do snapshot.
 **Pior PSI = 7,67** no volume diário de elegíveis (limite de alerta: 0,20) — reflexo da
-quebra de regime de setembro. Snapshot com **249 dias**, acima do ciclo alvo de 45 dias.
+quebra de regime de setembro. Em 09/09/2026, o snapshot está com **251 dias**, acima do ciclo alvo de 45 dias.
 Conclusão do monitor: **revalidação/retreino recomendado**.
 
 ---
@@ -176,14 +176,15 @@ Conclusão do monitor: **revalidação/retreino recomendado**.
 
 ## 7. Como capturar prints para o PPTX
 
-Mais simples: usar o Streamlit público (sempre no ar) — <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>.
-Alternativa local do app React: `uvicorn backend.main:app --port 8000` (raiz do repo, com
-`frontend/dist` buildado) → `http://localhost:8000`, primeira carga ~60–90 s.
+Usar o app React público — <https://visionops-ai.vercel.app> — que consome o backend FastAPI no
+Render. Como contingência, o Streamlit permanece em <https://fjhkvpspqbtpzlkhpgscvr.streamlit.app/>.
+Alternativa local: `uvicorn backend.main:app --port 8000` (raiz do repo, com `frontend/dist`
+buildado) → `http://localhost:8000`, primeira carga ~60–90 s.
 
-Páginas que valem print (nomes do Streamlit):
+Páginas que valem print no app React:
 
 1. **Central operacional** — cards 914 / 970 / 14,31% + "Próximas decisões"
-2. **Fila operacional** — dia 18/11/2025: 61 chamados, 14 em risco alto, 56% do risco esperado nos 20% do topo; conferência: 4 das 5 violações reais do dia caíram nesses 20% (13 chamados)
+2. **Fila operacional** — dia 18/11/2025: 61 chamados, 8 em risco alto, 63,4% do risco esperado nos 20% do topo; conferência: 3 das 5 violações reais do dia caíram nesses 20% (13 chamados)
 3. **Alocação preventiva** — cobertura 66% + curva de sensibilidade
 4. **Monitor de deriva** — alerta de revalidação + PSI de volume 7,67
 5. **Diagnóstico de OLA** — quadrantes + segmentação K-Means (cluster crítico: 3 produtos, taxa ~51%)
