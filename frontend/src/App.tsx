@@ -209,6 +209,7 @@ function AdvancedModelPanel() {
 }
 
 function ModelsPage() {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [data, setData] = useState<Models>()
   const [error, setError] = useState('')
   useEffect(() => { api<Models>('/api/models').then(setData).catch(e => setError(e.message)) }, [])
@@ -234,7 +235,7 @@ function ModelsPage() {
       <div className="model-table"><div className="table-row table-head"><span>Horizonte</span><span>Modelo selecionado</span><span>MAE</span><span>WAPE</span><span>Ganho</span></div>{data.volume.map(row => <div className="table-row" key={row.horizonte}><strong>{row.horizonte}</strong><span>{row.modelo}</span><span>{dec.format(row.mae)}</span><span>{pct(row.wape)}</span><span className={row.ganho >= 0 ? 'positive' : 'negative'}>{pct(row.ganho)}</span></div>)}</div>
       <div className="method-note"><ShieldCheck/><p><strong>Sem vazamento de alvo.</strong> O classificador utiliza apenas prioridade, produto, categoria, grupo e contexto temporal disponíveis na abertura. Dezembro permaneceu intocado até o teste final.</p></div>
     </Panel>
-    <AdvancedModelPanel/>
+    <Explain title="Consultar a extensão com feriados e validação por origem móvel" onOpen={setAdvancedOpen}>{advancedOpen && <AdvancedModelPanel/>}</Explain>
   </>
 }
 

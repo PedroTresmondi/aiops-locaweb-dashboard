@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -14,11 +13,12 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from model_pipeline import executar_pipeline
+from model_pipeline import executar_pipeline, avaliar_extensao_avancada
 from risk_pipeline import executar_pipeline_risco
 
 from backend import datasource, legacy_forecast, monitoring, optimization, segmentation, store
 from backend.telemetry import configurar_telemetria
+from backend.resources import cached_resource
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +29,7 @@ CAMPOS_FILA = ["id", "prioridade", "produto", "categoria", "grupo", "dataHora"]
 
 app = FastAPI(
     title="VisionOps AI API",
-    version="1.0.0",
+    version="1.1.0",
     description="API operacional para previsão de demanda e risco de violação de OLA.",
 )
 
@@ -75,20 +75,25 @@ def _clean_label(value: object) -> str:
     return text if text else "Não informado"
 
 
-@lru_cache(maxsize=1)
+@cached_resource
 def load_data() -> pd.DataFrame:
     """Incidentes tratados. Origem controlada por ``VISIONOPS_DATASOURCE`` (parquet | mysql)."""
     return datasource.carregar()
 
 
-@lru_cache(maxsize=1)
+@cached_resource
 def volume_model():
-    return executar_pipeline(load_data())
+    return executar_pipeline(load_data(), incluir_avancado=False)
 
 
-@lru_cache(maxsize=1)
+@cached_resource
 def risk_model():
     return executar_pipeline_risco(load_data())
+
+
+@cached_resource
+def advanced_model():
+    return avaliar_extensao_avancada(volume_model())
 
 
 def _forecast_payload(horizon: str) -> dict:
@@ -356,7 +361,7 @@ def models() -> dict:
 
 @app.get("/api/models/advanced")
 def modelo_avancado() -> dict:
-    avancado = volume_model().avancado
+    avancado = advanced_model()
     metricas = avancado["metricas"]
     backtest = avancado["backtest"]
     importancias = avancado["importancias"]
@@ -766,7 +771,7 @@ def segmentation_endpoint(
 # Contrato legado da Sprint 3 (endpoints usados no vídeo pitch e nas evidências)
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=1)
+@cached_resource
 def _previsao_legado_cache(chave: str) -> list[dict]:
     return legacy_forecast.gerar_previsoes(load_data())
 
@@ -805,4 +810,3 @@ if FRONTEND_DIST.exists():
         if candidate.is_file() and FRONTEND_DIST.resolve() in candidate.parents:
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
-

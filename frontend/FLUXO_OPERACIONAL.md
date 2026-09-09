@@ -33,3 +33,9 @@ Persistência e ordenação: `python -m unittest tests.test_sprint4.TestFilaOper
 Verificar no navegador: abertura, filtro de alto risco, troca de chamado, gravação de decisão, paginação, busca vazia, exportação do filtro, troca de data, cenário sem alto risco, recálculo da equipe, recálculo de produtos, diagnóstico, situação dos modelos, auditoria, avaliação individual, importação inválida e menu móvel.
 
 O teste de interface intercepta gravações para não gerar eventos de teste no serviço público. A persistência real é testada separadamente em um banco local de teste.
+
+## Inicialização no serviço gratuito
+
+A API serializa a construção dos recursos em cache para impedir treinamentos duplicados durante chamadas simultâneas. O forecast operacional é carregado sem executar a extensão avançada. A extensão reutiliza a série e as métricas operacionais e só é calculada ao abrir seus detalhes. A página inicial carrega primeiro a fila; o histórico de volume é consultado ao expandir a seção correspondente.
+
+Verificação após a correção: 33 testes Python aprovados, incluindo concorrência, modelos, métricas auditadas, fila e persistência. O build React também foi aprovado.

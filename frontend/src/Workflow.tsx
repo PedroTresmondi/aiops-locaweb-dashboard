@@ -18,16 +18,17 @@ function read<T>(path: string): Promise<T> {
   if (!pending.has(path)) pending.set(path, api<T>(path).then(value => { cache.set(path, value); return value }).finally(() => pending.delete(path)))
   return pending.get(path) as Promise<T>
 }
-export function useRead<T>(path: string) {
+export function useRead<T>(path: string, enabled = true) {
   const [result, setResult] = useState<{ path: string; data?: T; error?: string }>({ path, data: cache.get(path) as T })
   const [attempt, retry] = useState(0)
   useEffect(() => {
+    if (!enabled) return
     let active = true
     setResult({ path, data: cache.get(path) as T })
     read<T>(path).then(data => { if (active) setResult({ path, data }) }).catch(e => { if (active) setResult({ path, error: e.message }) })
     return () => { active = false }
-  }, [path, attempt])
-  return { data: result.path === path ? result.data : undefined, error: result.path === path ? result.error : undefined, retry: () => retry(n => n + 1) }
+  }, [path, attempt, enabled])
+  return { data: enabled && result.path === path ? result.data : undefined, error: enabled && result.path === path ? result.error : undefined, retry: () => retry(n => n + 1) }
 }
 type Session = { day: string; days: number; filter: Filter; imported?: RespostaFila; mode: 'history' | 'csv'; actions: Record<string, string> }
 const SessionContext = createContext<{ session: Session; update: Dispatch<SetStateAction<Session>> } | null>(null)
@@ -53,8 +54,8 @@ export function Heading({ title, children }: { title: string; children: ReactNod
 export function Box({ title, children, subtitle }: { title: string; subtitle?: string; children: ReactNode }) {
   return <section className="panel"><div className="panel-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div></div>{children}</section>
 }
-export function Explain({ title = 'Como interpretar estes números', children }: { title?: string; children: ReactNode }) {
-  return <details className="explain"><summary>{title}</summary><div>{children}</div></details>
+export function Explain({ title = 'Como interpretar estes números', children, onOpen }: { title?: string; children: ReactNode; onOpen?: (open: boolean) => void }) {
+  return <details className="explain" onToggle={e => onOpen?.(e.currentTarget.open)}><summary>{title}</summary><div>{children}</div></details>
 }
 function Metric({ label, value, children }: { label: string; value: string; children: ReactNode }) {
   return <article className="metric"><span>{label}</span><strong>{value}</strong><p>{children}</p></article>
@@ -64,9 +65,10 @@ export function ContextNote({ children }: { children: ReactNode }) {
 }
 export function StartPage({ navigate }: { navigate: Navigate }) {
   const { session, update } = useSession()
+  const [historyOpen, setHistoryOpen] = useState(false)
   const queue = useQueue()
-  const overview = useRead<Overview>('/api/overview')
-  const status = useRead<ModelStatus>('/api/model-status')
+  const overview = useRead<Overview>('/api/overview', historyOpen)
+  const status = useRead<ModelStatus>('/api/model-status', Boolean(queue.data))
   if (!queue.data) return <><Heading title="Por onde começar?">Revise os chamados de maior risco e decida o encaminhamento.</Heading><Wait error={queue.error} retry={queue.retry}/></>
   const q = queue.data.resumo
   const start = () => { update(s => ({ ...s, mode: 'history', filter: q.filaAlta ? 'Alto' : 'Todos' })); navigate('queue') }
@@ -90,7 +92,7 @@ export function StartPage({ navigate }: { navigate: Navigate }) {
     </div>
     {status.data?.revalidacaoRecomendada && <div className="review-banner"><AlertTriangle/><div><strong>As previsões precisam de revisão antes de uso operacional.</strong><p>Os dados mudaram desde o treinamento. Use os resultados como apoio à análise humana.</p></div><button className="ghost-button" onClick={() => navigate('monitor')}>Entender o alerta</button></div>}
     {status.error && <ContextNote>Não foi possível verificar a situação dos modelos. <button className="text-button" onClick={status.retry}>Tentar novamente</button></ContextNote>}
-    <Explain title="Ver a base histórica e a previsão de demanda">
+    <Explain title="Ver a base histórica e a previsão de demanda" onOpen={setHistoryOpen}>
       {!overview.data ? <Wait error={overview.error} retry={overview.retry}/> : <>
         <p>Base de {fullDate(overview.data.snapshot.inicio)} a {fullDate(overview.data.snapshot.fim)}: {integer.format(overview.data.snapshot.incidentes)} incidentes. A previsão de volume usa essa base completa; não é uma projeção da fila selecionada acima.</p>
         <div className="metric-strip">{overview.data.forecast.map(f => <Metric key={f.horizonte} label={`Volume previsto · ${fullDate(f.dataAlvo)}`} value={integer.format(f.ponto)}>Faixa estimada: {integer.format(f.inferior)} a {integer.format(f.superior)} chamados</Metric>)}</div>

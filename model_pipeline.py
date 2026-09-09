@@ -684,6 +684,11 @@ def _avaliar_modelo_operacional(serie: pd.DataFrame):
     )
 
 
+def avaliar_extensao_avancada(resultado: ResultadoModelo) -> dict:
+    """Avalia a extensão sob demanda reutilizando o resultado operacional."""
+    return _avaliar_modelo_avancado(resultado.serie, resultado.metricas_operacionais)
+
+
 def executar_pipeline(df: pd.DataFrame, incluir_avancado: bool = True) -> ResultadoModelo:
     serie = preparar_serie(df)
     modelagem = serie.dropna(
