@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode, type Dispatch, type SetStateAction } from 'react'
-import { ArrowRight, AlertTriangle, CheckCircle2, ListChecks, TrendingUp, Users, ShieldCheck, Download } from 'lucide-react'
+import { ArrowRight, AlertTriangle, CheckCircle2, ListChecks, TrendingUp, Users, ShieldCheck, Download, LineChart } from 'lucide-react'
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import { api, apiUrl } from './api'
 import type { Overview, RespostaFila, ItemFila, Perfil, Optimization, Capacity, ModelStatus, Drift, PriorityForecast } from './types'
@@ -54,8 +54,8 @@ export function Heading({ title, children }: { title: string; children: ReactNod
 export function Box({ title, children, subtitle }: { title: string; subtitle?: string; children: ReactNode }) {
   return <section className="panel"><div className="panel-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div></div>{children}</section>
 }
-export function Explain({ title = 'Como interpretar estes números', children, onOpen }: { title?: string; children: ReactNode; onOpen?: (open: boolean) => void }) {
-  return <details className="explain" onToggle={e => onOpen?.(e.currentTarget.open)}><summary>{title}</summary><div>{children}</div></details>
+export function Explain({ title = 'Como interpretar estes números', children, onOpen, open, id }: { title?: string; children: ReactNode; onOpen?: (open: boolean) => void; open?: boolean; id?: string }) {
+  return <details id={id} className="explain" open={open} onToggle={e => onOpen?.(e.currentTarget.open)}><summary>{title}</summary><div>{children}</div></details>
 }
 function Metric({ label, value, children }: { label: string; value: string; children: ReactNode }) {
   return <article className="metric"><span>{label}</span><strong>{value}</strong><p>{children}</p></article>
@@ -90,10 +90,11 @@ export function StartPage({ navigate }: { navigate: Navigate }) {
       <button className="task-card" onClick={() => navigate('capacity')}><Users/><strong>A equipe será suficiente?</strong><p>Simule o número de analistas com a previsão de demanda e as suas premissas.</p><span>Planejar equipe <ArrowRight size={16}/></span></button>
       <button className="task-card" onClick={() => navigate('diagnostics')}><TrendingUp/><strong>Onde os atrasos se concentram?</strong><p>Compare produtos, categorias e grupos para orientar uma investigação.</p><span>Analisar problemas <ArrowRight size={16}/></span></button>
       <button className="task-card" onClick={() => navigate('evidence')}><ListChecks/><strong>O resultado é confiável?</strong><p>Veja o que a priorização encontrou no período separado do treino e quais modelos exigem revisão.</p><span>Ver resultado operacional <ArrowRight size={16}/></span></button>
+      <button className="task-card" onClick={() => { setHistoryOpen(true); document.getElementById('previsao-demanda')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}><LineChart/><strong>Quanto devemos esperar de demanda?</strong><p>Veja o volume de chamados previsto para os próximos dias, com a faixa de confiança do modelo treinado.</p><span>Ver previsão de demanda <ArrowRight size={16}/></span></button>
     </div>
     {status.data?.revalidacaoRecomendada && <div className="review-banner"><AlertTriangle/><div><strong>O período mais recente do dataset mudou em relação ao treino.</strong><p>A aplicação detectou a mudança dentro da própria base e mantém os erros do teste visíveis.</p></div><button className="ghost-button" onClick={() => navigate('monitor')}>Entender o alerta</button></div>}
     {status.error && <ContextNote>Não foi possível verificar a situação dos modelos. <button className="text-button" onClick={status.retry}>Tentar novamente</button></ContextNote>}
-    <Explain title="Ver a base histórica e a previsão de demanda" onOpen={setHistoryOpen}>
+    <Explain id="previsao-demanda" title="Ver a base histórica e a previsão de demanda" open={historyOpen} onOpen={setHistoryOpen}>
       {!overview.data ? <Wait error={overview.error} retry={overview.retry}/> : <>
         <p>Base de {fullDate(overview.data.snapshot.inicio)} a {fullDate(overview.data.snapshot.fim)}: {integer.format(overview.data.snapshot.incidentes)} incidentes. A previsão de volume usa essa base completa; não é uma projeção da fila selecionada acima.</p>
         <div className="metric-strip">{overview.data.forecast.map(f => <Metric key={f.horizonte} label={`Volume previsto · ${fullDate(f.dataAlvo)}`} value={integer.format(f.ponto)}>Faixa estimada: {integer.format(f.inferior)} a {integer.format(f.superior)} chamados</Metric>)}</div>
