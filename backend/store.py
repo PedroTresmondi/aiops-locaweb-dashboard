@@ -54,6 +54,13 @@ def _garantir_esquema() -> None:
     conexao = sqlite3.connect(caminho, check_same_thread=False)
     try:
         conexao.executescript(_ESQUEMA)
+        colunas = {linha[1] for linha in conexao.execute("PRAGMA table_info(acao)")}
+        for nome, tipo in [
+            ("aberto_em", "TEXT"), ("esforco_minutos", "REAL"),
+            ("exercicio", "INTEGER NOT NULL DEFAULT 1"),
+        ]:
+            if nome not in colunas:
+                conexao.execute(f"ALTER TABLE acao ADD COLUMN {nome} {tipo}")
         conexao.commit()
     finally:
         conexao.close()
@@ -84,6 +91,9 @@ _ESQUEMA = """
                 acao TEXT NOT NULL,
                 nota TEXT,
                 perfil TEXT,
+                aberto_em TEXT,
+                esforco_minutos REAL,
+                exercicio INTEGER NOT NULL DEFAULT 1,
                 criado_em TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_acao_ticket ON acao(ticket_ref);
@@ -100,6 +110,13 @@ _ESQUEMA = """
                 valor_previsto REAL
             );
             CREATE INDEX IF NOT EXISTS idx_previsao_criado ON previsao_legado(criado_em);
+            CREATE TABLE IF NOT EXISTS desfecho_piloto (
+                ticket_ref TEXT PRIMARY KEY,
+                resolvido_em TEXT,
+                ola_violado INTEGER NOT NULL,
+                esforco_minutos REAL,
+                observado_em TEXT NOT NULL
+            );
 """
 
 
@@ -169,6 +186,9 @@ def registrar_acao(
     probabilidade: float | None = None,
     nota: str | None = None,
     perfil: str | None = None,
+    aberto_em: str | None = None,
+    esforco_minutos: float | None = None,
+    exercicio: bool = True,
 ) -> dict:
     if acao not in ACOES_VALIDAS:
         raise ValueError(f"Ação inválida: {acao!r}. Use uma de {ACOES_VALIDAS}.")
@@ -180,8 +200,9 @@ def registrar_acao(
         cursor = conexao.execute(
             """
             INSERT INTO acao
-                (lote_id, ticket_ref, prioridade, faixa, probabilidade, acao, nota, perfil, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (lote_id, ticket_ref, prioridade, faixa, probabilidade, acao, nota, perfil,
+                 aberto_em, esforco_minutos, exercicio, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 lote_id,
@@ -192,6 +213,9 @@ def registrar_acao(
                 acao,
                 (nota or "").strip() or None,
                 perfil,
+                aberto_em,
+                None if esforco_minutos is None else float(esforco_minutos),
+                int(exercicio),
                 criado_em,
             ),
         )
@@ -204,6 +228,7 @@ def registrar_acao(
         "nota": (nota or "").strip() or None,
         "perfil": perfil,
         "criadoEm": criado_em,
+        "exercicio": bool(exercicio),
     }
 
 
@@ -211,7 +236,8 @@ def acoes_recentes(limite: int = 40) -> list[dict]:
     with conectar() as conexao:
         linhas = conexao.execute(
             """
-            SELECT id, lote_id, ticket_ref, prioridade, faixa, probabilidade, acao, nota, perfil, criado_em
+            SELECT id, lote_id, ticket_ref, prioridade, faixa, probabilidade, acao, nota, perfil,
+                   aberto_em, esforco_minutos, exercicio, criado_em
             FROM acao ORDER BY id DESC LIMIT ?
             """,
             (int(limite),),
@@ -228,6 +254,9 @@ def acoes_recentes(limite: int = 40) -> list[dict]:
             "nota": linha["nota"],
             "perfil": linha["perfil"],
             "criadoEm": linha["criado_em"],
+            "abertoEm": linha["aberto_em"],
+            "esforcoMinutos": linha["esforco_minutos"],
+            "exercicio": bool(linha["exercicio"]),
         }
         for linha in linhas
     ]
@@ -294,3 +323,49 @@ def historico_ticket(ticket_ref: str) -> list[dict]:
         }
         for linha in linhas
     ]
+
+
+def registrar_desfecho(ticket_ref: str, ola_violado: bool, resolvido_em: str | None, esforco_minutos: float | None) -> dict:
+    ticket_ref = ticket_ref.strip()
+    if not ticket_ref:
+        raise ValueError("ticket_ref não pode ser vazio.")
+    observado = _agora()
+    with conectar() as conexao:
+        existe = conexao.execute("SELECT 1 FROM acao WHERE ticket_ref=? AND exercicio=0", (ticket_ref,)).fetchone()
+        if not existe:
+            raise ValueError("Registre primeiro uma decisão operacional para este chamado.")
+        conexao.execute(
+            """INSERT INTO desfecho_piloto(ticket_ref,resolvido_em,ola_violado,esforco_minutos,observado_em)
+               VALUES(?,?,?,?,?) ON CONFLICT(ticket_ref) DO UPDATE SET resolvido_em=excluded.resolvido_em,
+               ola_violado=excluded.ola_violado, esforco_minutos=excluded.esforco_minutos,
+               observado_em=excluded.observado_em""",
+            (ticket_ref, resolvido_em, int(ola_violado), esforco_minutos, observado),
+        )
+    return {"ticketRef": ticket_ref, "olaViolado": bool(ola_violado), "observadoEm": observado}
+
+
+def metricas_piloto() -> dict:
+    with conectar() as conexao:
+        decisoes = conexao.execute("""
+            SELECT ticket_ref, MIN(criado_em) primeiro_registro, MIN(aberto_em) aberto_em,
+                   SUM(COALESCE(esforco_minutos,0)) esforco_acao
+            FROM acao WHERE exercicio=0 GROUP BY ticket_ref
+        """).fetchall()
+        desfechos = conexao.execute("SELECT * FROM desfecho_piloto").fetchall()
+    reacoes = []
+    for linha in decisoes:
+        if linha["aberto_em"]:
+            horas = (datetime.fromisoformat(linha["primeiro_registro"]) - datetime.fromisoformat(linha["aberto_em"])).total_seconds() / 3600
+            if horas >= 0:
+                reacoes.append(horas)
+    esforco = sum(float(linha["esforco_acao"] or 0) for linha in decisoes) + sum(float(linha["esforco_minutos"] or 0) for linha in desfechos)
+    violacoes = sum(int(linha["ola_violado"]) for linha in desfechos)
+    return {
+        "chamadosComDecisao": len(decisoes), "chamadosComDesfecho": len(desfechos),
+        "coberturaDesfecho": round(len(desfechos) / len(decisoes), 4) if decisoes else None,
+        "tempoReacaoMedioHoras": round(sum(reacoes) / len(reacoes), 2) if reacoes else None,
+        "reacoesMedidas": len(reacoes), "esforcoTotalMinutos": round(esforco, 1),
+        "taxaViolacaoOla": round(violacoes / len(desfechos), 4) if desfechos else None,
+        "violacoes": violacoes,
+        "nota": "Métricas observacionais do piloto. Sem grupo de controle, não estimam redução causal de violações.",
+    }

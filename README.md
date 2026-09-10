@@ -226,6 +226,7 @@ streamlit run app.py
 O `Dockerfile` gera o frontend e publica React + API no mesmo serviço. No Render, importe
 o repositório como Blueprint usando `render.yaml`. A versão React não roda no Streamlit
 Community Cloud porque essa plataforma espera um processo Streamlit, não uma API ASGI.
+Defina `VISIONOPS_ADMIN_TOKEN` no backend para habilitar a atualização autenticada da base.
 
 ## Testar
 
@@ -235,9 +236,10 @@ python -m unittest discover -s tests -v
 
 ## Limites de uso
 
-- O dataset é um snapshot; a leitura via MySQL usa a mesma carga de 122.543 incidentes. Não há
-  ingestão contínua — o Monitor de dados existe justamente para sinalizar quando o snapshot
-  ficou velho demais ou a distribuição mudou.
+- O dataset inicial é um snapshot. A área **Operação piloto** aceita uma exportação CSV recente,
+  valida e consolida os incidentes por número e recalcula os modelos. A operação exige
+  `VISIONOPS_ADMIN_TOKEN`; o arquivo atualizado deve ficar em disco persistente por meio de
+  `VISIONOPS_CURRENT_DATASET` para sobreviver a novos deploys.
 - O forecast prevê volume total e, separadamente, volumes P2/P3; o classificador de OLA estima risco de incidentes elegíveis.
   A fila operacional pontua um lote (dia real do snapshot ou CSV), não um feed ao vivo.
 - Na fila do snapshot, o campo "violou" é o resultado real do incidente — serve só para
@@ -245,8 +247,8 @@ python -m unittest discover -s tests -v
 - Coeficientes e contribuições por fator descrevem o comportamento do modelo, não causalidade.
 - Converter volume em headcount exige produtividade/tempo por analista, ausentes na fonte;
   por isso o simulador torna essas premissas explícitas e editáveis.
-- O registro de ações mede risco endereçado (soma das probabilidades dos chamados com ação),
-  **não** violações evitadas. A cobertura histórica do cenário de priorização também não.
+- O piloto mede tempo entre abertura e primeira decisão, esforço informado e OLA observado.
+  São métricas observacionais; sem grupo de controle, não provam violações evitadas.
 - A alocação preventiva (MILP) usa capacidade e custo por produto como parâmetros ilustrativos
   — precisam ser calibrados com a operação real da Locaweb.
 - O perfil operacional é uma visão de trabalho, não autenticação.
@@ -274,8 +276,25 @@ de cobertura futura. A API inclui as linhas de teste para reproduzir os cálculo
 
 O principal resultado de priorização é **39,2% das 125 violações em 15,8% dos 1.438
 chamados** no teste de dezembro: 2,48 vezes a concentração média. Isso não é redução
-comprovada de atrasos. O app não executa encaminhamentos no ITSM, não foi homologado
-na operação da Locaweb e não mede ganhos causais de tempo de reação ou esforço.
+comprovada de atrasos. O app não executa encaminhamentos no ITSM e não foi homologado
+na operação da Locaweb. A área de piloto passa a medir tempo de reação, esforço e OLA
+quando a equipe registra decisões e desfechos reais.
 O SQLite local é adequado à demonstração; sem armazenamento persistente configurado,
-reinicializações/deploys do serviço gratuito podem perder registros. O CSV pontua
-chamados novos, mas não atualiza automaticamente a base de treino.
+reinicializações/deploys do serviço gratuito podem perder registros. O CSV da fila pontua
+chamados; a exportação completa da área Operação piloto atualiza a base de treino.
+
+## Operação piloto e atualização dos modelos
+
+- `POST /api/actions`: registra a decisão, abertura, esforço e se é exercício histórico.
+- `POST /api/pilot/outcomes`: registra o desfecho e a ocorrência de violação.
+- `GET /api/pilot/metrics`: calcula cobertura de desfechos, tempo médio de reação,
+  esforço total e taxa observada de OLA. Exercícios históricos ficam fora desse cálculo.
+- `POST /api/data/import`: recebe até 100 mil incidentes, autentica por
+  `X-VisionOps-Admin`, valida datas/duração, consolida duplicatas e retreina.
+- `POST /api/models/retrain`: força o recálculo sobre a base persistida.
+
+As janelas de seleção e teste se deslocam com a data mais recente. O último mês permanece
+como teste; os dois meses anteriores selecionam/calibram os modelos. O modelo operacional
+de risco promovido aprende com treino e validação, sem usar o mês de teste. O volume total
+e P2/P3 também recalculam previsões e métricas. Se qualquer pipeline falhar, a importação
+é revertida e a base anterior volta a responder.

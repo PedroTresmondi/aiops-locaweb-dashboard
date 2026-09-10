@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 from model_pipeline import executar_pipeline, avaliar_extensao_avancada
 from risk_pipeline import executar_pipeline_risco
 
-from backend import datasource, legacy_forecast, monitoring, optimization, priority_forecast, segmentation, store
+from backend import data_update, datasource, legacy_forecast, monitoring, optimization, priority_forecast, segmentation, store
 from backend.telemetry import configurar_telemetria
 from backend.resources import cached_resource
 
@@ -29,7 +30,7 @@ CAMPOS_FILA = ["id", "prioridade", "produto", "categoria", "grupo", "dataHora"]
 
 app = FastAPI(
     title="VisionOps AI API",
-    version="1.1.0",
+    version="1.2.0",
     description="API operacional para previsão de demanda e risco de violação de OLA.",
 )
 
@@ -486,6 +487,47 @@ class AcaoRequest(BaseModel):
     probabilidade: float | None = None
     nota: str | None = None
     perfil: str | None = None
+    abertoEm: datetime | None = None
+    esforcoMinutos: float | None = Field(default=None, ge=0, le=1440)
+    exercicio: bool = True
+
+
+class DesfechoPilotoRequest(BaseModel):
+    ticketRef: str
+    olaViolado: bool
+    resolvidoEm: datetime | None = None
+    esforcoMinutos: float | None = Field(default=None, ge=0, le=10080)
+
+
+class DataImportRequest(BaseModel):
+    itens: list[dict]
+    retreinar: bool = True
+
+
+def _admin_token(x_visionops_admin: str | None = Header(default=None)) -> None:
+    expected = os.environ.get("VISIONOPS_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Defina VISIONOPS_ADMIN_TOKEN no backend antes de atualizar a base.")
+    import secrets
+    if not x_visionops_admin or not secrets.compare_digest(x_visionops_admin, expected):
+        raise HTTPException(status_code=401, detail="Chave administrativa inválida.")
+
+
+def _clear_model_caches() -> None:
+    for resource in (load_data, volume_model, risk_model, advanced_model, priority_model):
+        resource.cache_clear()
+
+
+def _retrain_payload() -> dict:
+    volume = volume_model()
+    risk = risk_model()
+    priority = priority_model()
+    return {
+        "status": "concluido", "snapshot": pd.to_datetime(load_data()["Aberto"]).max().date().isoformat(),
+        "volume": [{"horizonte": row.horizonte, "mae": round(float(row.holdout_MAE), 2)} for row in volume.metricas_operacionais.itertuples()],
+        "risco": {"rocAuc": round(float(risk.metricas_holdout["ROC_AUC"]), 4), "prAuc": round(float(risk.metricas_holdout["PR_AUC"]), 4)},
+        "prioridades": [{"prioridade": f["prioridade"], "horizonte": f["horizonte"], "mae": f["validacao"]["mae"]} for f in priority["previsoes"]],
+    }
 
 
 def _tabelas_taxa(eligible: pd.DataFrame) -> dict[str, dict[str, tuple[int, float]]]:
@@ -688,6 +730,9 @@ def registrar_acao(payload: AcaoRequest) -> dict:
             probabilidade=payload.probabilidade,
             nota=payload.nota,
             perfil=payload.perfil,
+            aberto_em=payload.abertoEm.isoformat() if payload.abertoEm else None,
+            esforco_minutos=payload.esforcoMinutos,
+            exercicio=payload.exercicio,
         )
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro))
@@ -701,6 +746,75 @@ def acoes_resumo() -> dict:
 @app.get("/api/actions/recent")
 def acoes_recentes(limit: int = Query(default=40, ge=1, le=200)) -> dict:
     return {"itens": store.acoes_recentes(limit)}
+
+
+@app.post("/api/pilot/outcomes")
+def registrar_desfecho_piloto(payload: DesfechoPilotoRequest) -> dict:
+    try:
+        return store.registrar_desfecho(
+            payload.ticketRef, payload.olaViolado,
+            payload.resolvidoEm.isoformat() if payload.resolvidoEm else None,
+            payload.esforcoMinutos,
+        )
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+
+@app.get("/api/pilot/metrics")
+def metricas_piloto() -> dict:
+    return store.metricas_piloto()
+
+
+@app.get("/api/data/status")
+def data_status() -> dict:
+    return {**data_update.status(), "atualizacaoProtegida": True, "adminConfigurado": bool(os.environ.get("VISIONOPS_ADMIN_TOKEN"))}
+
+
+@app.get("/api/data/template", response_class=PlainTextResponse)
+def data_template() -> str:
+    return "Número,Prioridade_Cod,Produto,Categoria,Grupo designado,Aberto,Resolvido,Duracao_Horas,Status,Incidente Pai\nINC-NOVO-1,3,produto,categoria,equipe,2026-09-01T09:00:00,2026-09-01T12:00:00,3,Resolvido,\n"
+
+
+@app.post("/api/data/import")
+def import_data(payload: DataImportRequest, _: None = Depends(_admin_token)) -> dict:
+    if len(payload.itens) > 100_000:
+        raise HTTPException(status_code=422, detail="Limite de 100.000 incidentes por importação.")
+    target = data_update.current_path()
+    backup = target.with_suffix(".rollback.parquet")
+    existed = target.exists()
+    if existed:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup)
+    try:
+        imported = data_update.import_records(payload.itens)
+        _clear_model_caches()
+        trained = _retrain_payload() if payload.retreinar else {"status": "pendente"}
+        return {"importacao": imported, "retreino": trained}
+    except ValueError as erro:
+        if existed and backup.exists():
+            os.replace(backup, target)
+        elif not existed and target.exists():
+            target.unlink()
+        _clear_model_caches()
+        raise HTTPException(
+            status_code=422,
+            detail=f"A base foi rejeitada e restaurada porque o retreino falhou: {erro}",
+        ) from erro
+    except Exception as erro:
+        if existed and backup.exists():
+            os.replace(backup, target)
+        elif not existed and target.exists():
+            target.unlink()
+        _clear_model_caches()
+        raise HTTPException(status_code=422, detail=f"A base foi rejeitada e restaurada porque o retreino falhou: {erro}") from erro
+    finally:
+        backup.unlink(missing_ok=True)
+
+
+@app.post("/api/models/retrain")
+def retrain_models(_: None = Depends(_admin_token)) -> dict:
+    _clear_model_caches()
+    return _retrain_payload()
 
 
 # ---------------------------------------------------------------------------
@@ -734,14 +848,14 @@ def model_status() -> dict:
         "cicloRetreinoDias": 45,
         "origemDados": datasource.origem(),
         "risco": {
-            "treino": "incidentes elegíveis anteriores a 01/10/2025",
-            "validacao": "outubro e novembro de 2025",
+            "treino": f"incidentes elegíveis anteriores a {risco.inicio_validacao:%d/%m/%Y}",
+            "validacao": f"{risco.inicio_validacao:%d/%m/%Y} a {(risco.inicio_holdout - pd.Timedelta(days=1)):%d/%m/%Y}",
             "holdout": f"{risco.inicio_holdout:%d/%m/%Y} a {risco.fim_holdout:%d/%m/%Y}",
             "rocAuc": round(float(risco.metricas_holdout["ROC_AUC"]), 3),
             "prAuc": round(float(risco.metricas_holdout["PR_AUC"]), 3),
         },
         "volume": {
-            "holdout": "01–31/12/2025",
+            "holdout": f"{pd.to_datetime(volume.backtest_operacional['data_alvo']).min():%d/%m/%Y} a {pd.to_datetime(volume.backtest_operacional['data_alvo']).max():%d/%m/%Y}",
             "maeD1": round(float(metricas_op.loc["D+1", "holdout_MAE"]), 1),
             "maeD7": round(float(metricas_op.loc["D+7", "holdout_MAE"]), 1),
         },

@@ -28,22 +28,28 @@ def origem() -> str:
 
 def _garantir_regras(df: pd.DataFrame) -> pd.DataFrame:
     status = df["Status"].astype("string")
-    if "OLA_Violado_Regra" not in df:
-        limites = df["Prioridade_Cod"].map(_LIMITES_OLA)
-        df["OLA_Violado_Regra"] = df["Duracao_Horas"].gt(limites)
-    if "Elegivel_KPI_Regra" not in df:
-        sem_pai = df["Incidente Pai"].isna() | df["Incidente Pai"].astype(str).str.strip().eq("")
-        com_intervencao = ~status.str.upper().str.startswith("SEM INTERVEN", na=False)
-        df["Elegivel_KPI_Regra"] = df["Prioridade_Cod"].isin([1, 2, 3]) & sem_pai & com_intervencao
-    if "OLA_Violado_KPI_Regra" not in df:
-        df["OLA_Violado_KPI_Regra"] = df["OLA_Violado_Regra"] & df["Elegivel_KPI_Regra"]
+    limites = df["Prioridade_Cod"].map(_LIMITES_OLA)
+    if "Desfecho_Conhecido" not in df:
+        # A base auditada original já contém o rótulo fornecido para todo o período.
+        # Importações novas declaram explicitamente quando o desfecho ainda é desconhecido.
+        df["Desfecho_Conhecido"] = True
+    df["Desfecho_Conhecido"] = df["Desfecho_Conhecido"].fillna(False).astype(bool)
+    df["OLA_Violado_Regra"] = pd.to_numeric(df["Duracao_Horas"], errors="coerce").gt(limites)
+    sem_pai = df["Incidente Pai"].isna() | df["Incidente Pai"].astype(str).str.strip().eq("")
+    com_intervencao = ~status.str.upper().str.startswith("SEM INTERVEN", na=False)
+    df["Elegivel_KPI_Regra"] = df["Prioridade_Cod"].isin([1, 2, 3]) & sem_pai & com_intervencao
+    df["OLA_Violado_KPI_Regra"] = df["OLA_Violado_Regra"] & df["Elegivel_KPI_Regra"]
     for coluna in ["OLA_Violado_Regra", "Elegivel_KPI_Regra", "OLA_Violado_KPI_Regra"]:
         df[coluna] = df[coluna].astype(bool)
     return df
 
 
 def _carregar_parquet() -> pd.DataFrame:
-    df = pd.read_parquet(DATASET)
+    updated = os.environ.get("VISIONOPS_CURRENT_DATASET")
+    default_updated = ROOT / ".visionops" / "current.parquet"
+    configured = Path(updated) if updated else None
+    selected = configured if configured and configured.exists() else (default_updated if default_updated.exists() else DATASET)
+    df = pd.read_parquet(selected)
     df["Aberto"] = pd.to_datetime(df["Aberto"])
     if "Resolvido" in df:
         df["Resolvido"] = pd.to_datetime(df["Resolvido"], errors="coerce")

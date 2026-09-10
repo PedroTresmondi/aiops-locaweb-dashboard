@@ -5,6 +5,7 @@ __pycache__/
 .streamlit/secrets.toml
 operacional.db
 operacional.db-*
+.visionops/
 *.sqlite3
 frontend/node_modules/
 frontend/dist/

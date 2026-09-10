@@ -4,7 +4,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import { api, apiUrl } from './api'
 import type { Overview, RespostaFila, ItemFila, Perfil, Optimization, Capacity, ModelStatus, Drift, PriorityForecast } from './types'
 
-export type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'monitor' | 'models' | 'audit'
+export type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'pilot' | 'monitor' | 'models' | 'audit'
 export type Navigate = (page: Page) => void
 type Filter = 'Todos' | 'Alto' | 'Moderado' | 'Baixo'
 const integer = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 })
@@ -89,6 +89,7 @@ export function StartPage({ navigate }: { navigate: Navigate }) {
     <div className="task-grid">
       <button className="task-card" onClick={() => navigate('capacity')}><Users/><strong>A equipe será suficiente?</strong><p>Simule o número de analistas com a previsão de demanda e as suas premissas.</p><span>Planejar equipe <ArrowRight size={16}/></span></button>
       <button className="task-card" onClick={() => navigate('diagnostics')}><TrendingUp/><strong>Onde os atrasos se concentram?</strong><p>Compare produtos, categorias e grupos para orientar uma investigação.</p><span>Analisar problemas <ArrowRight size={16}/></span></button>
+      <button className="task-card" onClick={() => navigate('pilot')}><ListChecks/><strong>Como medir e atualizar?</strong><p>Acompanhe o piloto, informe desfechos e revalide os modelos com dados recentes.</p><span>Abrir operação piloto <ArrowRight size={16}/></span></button>
     </div>
     {status.data?.revalidacaoRecomendada && <div className="review-banner"><AlertTriangle/><div><strong>As previsões precisam de revisão antes de uso operacional.</strong><p>Os dados mudaram desde o treinamento. Use os resultados como apoio à análise humana.</p></div><button className="ghost-button" onClick={() => navigate('monitor')}>Entender o alerta</button></div>}
     {status.error && <ContextNote>Não foi possível verificar a situação dos modelos. <button className="text-button" onClick={status.retry}>Tentar novamente</button></ContextNote>}
@@ -107,7 +108,7 @@ const actionNames: Record<string, string> = { atribuido: 'Atribuição registrad
 const actionKey = (response: RespostaFila, id: string) => `${response.origem}:${response.loteId ?? response.referencia}:${id}`
 
 // CSV com aspas, quebras de linha e separador comum em exportações brasileiras.
-export function parseQueueCsv(text: string): Record<string, string>[] {
+export function parseCsv(text: string): Record<string, string>[] {
   const input = text.replace(/^\uFEFF/, '')
   const first = input.split(/\r?\n/)[0]
   const delimiter = first.includes(';') ? ';' : ','
@@ -123,16 +124,23 @@ export function parseQueueCsv(text: string): Record<string, string>[] {
   row.push(cell.trim()); if (row.some(Boolean)) rows.push(row)
   const header = rows.shift()
   if (!header || !rows.length) throw new Error('O CSV precisa de cabeçalho e ao menos um chamado.')
-  if (rows.length > 5000) throw new Error('Importe até 5.000 chamados por arquivo.')
   const records = rows.map((cells, index) => {
     if (cells.length !== header.length) throw new Error(`Linha ${index + 2}: quantidade de colunas diferente do cabeçalho.`)
     return Object.fromEntries(header.map((key, i) => [key.toLowerCase(), cells[i]]))
   })
+  return records
+}
+
+export function parseQueueCsv(text: string): Record<string, string>[] {
+  const records = parseCsv(text)
+  if (records.length > 5000) throw new Error('Importe até 5.000 chamados por arquivo.')
   const ids = new Set<string>()
   records.forEach((r, index) => {
     const id = r.id || r.numero || r['número']
-    if (!id || !r.prioridade || !r.produto || !r.categoria || !(r.grupo || r['grupo designado'])) throw new Error(`Linha ${index + 2}: preencha id, prioridade, produto, categoria e grupo.`)
+    const opened = r.datahora || r.data_hora || r.aberto
+    if (!id || !r.prioridade || !r.produto || !r.categoria || !(r.grupo || r['grupo designado']) || !opened) throw new Error(`Linha ${index + 2}: preencha id, prioridade, produto, categoria, grupo e data de abertura.`)
     if (![1, 2, 3, 4, 5].includes(Number(r.prioridade))) throw new Error(`Linha ${index + 2}: prioridade deve ser de 1 a 5.`)
+    if (Number.isNaN(Date.parse(opened))) throw new Error(`Linha ${index + 2}: data de abertura inválida.`)
     if (ids.has(id)) throw new Error(`Chamado duplicado no arquivo: ${id}.`)
     ids.add(id)
   })
@@ -143,6 +151,7 @@ function TicketDetail({ item, response, perfil }: { item: ItemFila; response: Re
   const { session, update } = useSession()
   const [action, setAction] = useState('atribuido')
   const [note, setNote] = useState('')
+  const [effort, setEffort] = useState(5)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const recorded = session.actions[actionKey(response, item.id)]
@@ -150,7 +159,7 @@ function TicketDetail({ item, response, perfil }: { item: ItemFila; response: Re
     if (saving) return
     setSaving(true); setError('')
     try {
-      await api('/api/actions', { method: 'POST', body: JSON.stringify({ ticketRef: item.id, acao: action, loteId: response.loteId, prioridade: item.prioridade, faixa: item.faixa, probabilidade: item.probabilidade, perfil, nota: `${response.origem === 'snapshot' ? 'Exercício histórico' : 'Revisão de CSV'} · ${response.referencia ?? ''} · ${note}` }) })
+      await api('/api/actions', { method: 'POST', body: JSON.stringify({ ticketRef: item.id, acao: action, loteId: response.loteId, prioridade: item.prioridade, faixa: item.faixa, probabilidade: item.probabilidade, perfil, abertoEm: item.aberto, esforcoMinutos: response.origem === 'snapshot' ? null : effort, exercicio: response.origem === 'snapshot', nota: `${response.origem === 'snapshot' ? 'Exercício histórico' : 'Piloto por CSV'} · ${response.referencia ?? ''} · ${note}` }) })
       update(s => ({ ...s, actions: { ...s.actions, [actionKey(response, item.id)]: action } }))
     } catch (e) { setError((e as Error).message) } finally { setSaving(false) }
   }
@@ -167,6 +176,7 @@ function TicketDetail({ item, response, perfil }: { item: ItemFila; response: Re
     {perfil === 'gestor' ? <p>O perfil Gestor permite acompanhamento. Use Analista para registrar decisões.</p> : <form className="decision-form" onSubmit={e => { e.preventDefault(); save() }}>
       <label>Decisão<select aria-label="Decisão" value={action} onChange={e => setAction(e.target.value)}><option value="atribuido">Registrar atribuição</option><option value="escalado">Registrar escalonamento</option><option value="resolvido">Registrar resolução</option><option value="dispensado">Dispensar revisão prioritária</option></select></label>
       <label>Justificativa (opcional)<textarea maxLength={500} value={note} onChange={e => setNote(e.target.value)} placeholder="Descreva o encaminhamento escolhido."/></label>
+      {response.origem !== 'snapshot' && <label>Esforço nesta revisão (minutos)<input aria-label="Esforço nesta revisão (minutos)" type="number" min="0" max="1440" value={effort} onChange={e => setEffort(+e.target.value)}/></label>}
       <button className="primary-button" disabled={saving}>{saving ? 'Salvando…' : 'Salvar decisão'}</button>
     </form>}
     {error && <div role="alert" className="error-state">{error}</div>}
@@ -217,7 +227,7 @@ export function WorkQueue({ perfil, navigate }: { perfil: Perfil; navigate: Navi
     </form> : <div className="period-controls"><label>Arquivo CSV<input type="file" accept=".csv" disabled={busy} onChange={e => { const file = e.target.files?.[0]; if (file) upload(file); e.target.value = '' }}/></label><a className="ghost-button" href={apiUrl('/api/queue/template')}>Baixar modelo CSV</a><span className="subtle">Preencha os valores reais do seu lote antes de importar.</span></div>}
     {error && <Wait error={error}/>} {busy && <Wait/>}
     {session.mode === 'history' && !response && <Wait error={history.error} retry={history.retry}/>}
-    {session.mode === 'csv' && !response && !busy && !error && <Box title="Selecione um arquivo para começar"><p>Informe id, prioridade (1 a 5), produto, categoria e grupo. A data de abertura pode ser enviada em dataHora. Os exemplos do modelo CSV são apenas instruções de preenchimento.</p></Box>}
+    {session.mode === 'csv' && !response && !busy && !error && <Box title="Selecione um arquivo para começar"><p>Informe id, prioridade (1 a 5), produto, categoria, grupo e data de abertura em dataHora. A data permite calcular o tempo de reação no piloto. Os exemplos do modelo CSV são apenas instruções de preenchimento.</p></Box>}
     {response && r && <>
       <ContextNote>{session.mode === 'history' ? <><strong>Período carregado: {range(session.day, session.days)}</strong> · Exercício histórico. As ações não alteram o resultado original dos chamados.</> : <><strong>Lote: {response.referencia}</strong> · Dados enviados pelo usuário; sem confirmação do resultado real.</>}</ContextNote>
       <div className="metric-strip"><Metric label="Chamados neste lote" value={integer.format(r.total)}>O resumo considera o lote completo</Metric><Metric label="Risco alto" value={integer.format(r.filaAlta)}>Revisar prioridade e encaminhamento</Metric><Metric label="Decisões nesta sessão" value={integer.format(actionCount)}>Chamados deste lote com registro salvo agora</Metric></div>

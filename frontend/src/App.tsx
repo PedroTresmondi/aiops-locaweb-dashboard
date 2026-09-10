@@ -8,11 +8,11 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api } from './api'
-import { WorkflowProvider, StartPage, WorkQueue, ProductPlan, TeamPlan, ForecastHealth, Explain, ContextNote, fullDate, type Page } from './Workflow'
+import { api, apiUrl } from './api'
+import { WorkflowProvider, StartPage, WorkQueue, ProductPlan, TeamPlan, ForecastHealth, Explain, ContextNote, fullDate, parseCsv, type Page } from './Workflow'
 import type {
   AdvancedModel, Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
-  Perfil, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
+  DataStatus, Perfil, PilotMetrics, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
 } from './types'
 
 
@@ -23,6 +23,7 @@ const nav: { id: Page; label: string; icon: typeof Activity }[] = [
   { id: 'diagnostics', label: 'Analisar problemas', icon: Target },
   { id: 'optimization', label: 'Revisar produtos', icon: SlidersHorizontal },
   { id: 'capacity', label: 'Planejar equipe', icon: Users },
+  { id: 'pilot', label: 'Operação piloto', icon: Activity },
   { id: 'monitor', label: 'Situação dos modelos', icon: Radar },
   { id: 'models', label: 'Validação dos modelos', icon: BarChart3 },
   { id: 'audit', label: 'Qualidade dos dados', icon: Database },
@@ -255,6 +256,69 @@ function AuditPage() {
   </>
 }
 
+function PilotPage() {
+  const [metrics, setMetrics] = useState<PilotMetrics>()
+  const [status, setStatus] = useState<DataStatus>()
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [token, setToken] = useState('')
+  const [outcome, setOutcome] = useState({ ticketRef: '', olaViolado: 'false', resolvidoEm: '', esforcoMinutos: 0 })
+  const load = () => Promise.all([api<PilotMetrics>('/api/pilot/metrics'), api<DataStatus>('/api/data/status')]).then(([m, s]) => { setMetrics(m); setStatus(s) }).catch(e => setError(e.message))
+  useEffect(() => { load() }, [])
+  async function saveOutcome(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError(''); setMessage('')
+    try {
+      await api('/api/pilot/outcomes', { method: 'POST', body: JSON.stringify({ ...outcome, olaViolado: outcome.olaViolado === 'true', resolvidoEm: outcome.resolvidoEm || null }) })
+      setMessage('Desfecho salvo. As métricas do piloto foram recalculadas.'); await load()
+    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
+  async function importHistory(file: File) {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const records = parseCsv(await file.text())
+      if (records.length > 100000) throw new Error('Importe até 100.000 incidentes por arquivo.')
+      const result = await api<{ importacao: { recebidos: number; novos: number; atualizados: number; snapshotDepois: string }; retreino: { status: string } }>('/api/data/import', { method: 'POST', headers: { 'X-VisionOps-Admin': token }, body: JSON.stringify({ itens: records, retreinar: true }) })
+      setMessage(`${result.importacao.recebidos} registros processados: ${result.importacao.novos} novos e ${result.importacao.atualizados} atualizados. Retreino ${result.retreino.status}.`); await load()
+    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
+  if (!metrics || !status) return error ? <ErrorState message={error}/> : <Loading label="Carregando operação piloto"/>
+  return <>
+    <PageTitle eyebrow="Próximos passos implementados" title="Operação piloto e atualização" copy="Meça o uso, informe desfechos e revalide os modelos com uma nova exportação de incidentes."/>
+    <ContextNote>Fonte atual: {status.origem} · {int.format(status.incidentes)} incidentes · dados até {fullDate(status.snapshot)}.</ContextNote>
+    <div className="stats-grid pilot-stats">
+      <StatCard icon={<ListChecks/>} label="Chamados com decisão" value={int.format(metrics.chamadosComDecisao)} detail={`${int.format(metrics.chamadosComDesfecho)} com desfecho informado`} tone="navy"/>
+      <StatCard icon={<Clock3/>} label="Tempo médio de reação" value={metrics.tempoReacaoMedioHoras === null ? 'Sem medição' : `${dec.format(metrics.tempoReacaoMedioHoras)} h`} detail={`${metrics.reacoesMedidas} reações calculadas`} tone="orange"/>
+      <StatCard icon={<Activity/>} label="Esforço registrado" value={`${dec.format(metrics.esforcoTotalMinutos)} min`} detail="Decisão e fechamento do piloto" tone="teal"/>
+      <StatCard icon={<ShieldCheck/>} label="Violação de OLA" value={metrics.taxaViolacaoOla === null ? 'Sem desfecho' : pct(metrics.taxaViolacaoOla)} detail={`${metrics.violacoes} violações observadas`} tone="red"/>
+    </div>
+    <div className="content-grid equal">
+      <Panel title="1. Informar o resultado do piloto" subtitle="Use um chamado importado por CSV que já tenha uma decisão registrada.">
+        <form className="form-grid" onSubmit={saveOutcome}>
+          <label><span>Número do chamado</span><input required value={outcome.ticketRef} onChange={e => setOutcome(s => ({ ...s, ticketRef: e.target.value }))}/></label>
+          <label><span>Resultado de OLA</span><select value={outcome.olaViolado} onChange={e => setOutcome(s => ({ ...s, olaViolado: e.target.value }))}><option value="false">Cumpriu o OLA</option><option value="true">Violou o OLA</option></select></label>
+          <label><span>Data e hora da resolução</span><input type="datetime-local" value={outcome.resolvidoEm} onChange={e => setOutcome(s => ({ ...s, resolvidoEm: e.target.value }))}/></label>
+          <label><span>Esforço no fechamento (minutos)</span><input type="number" min="0" max="10080" value={outcome.esforcoMinutos} onChange={e => setOutcome(s => ({ ...s, esforcoMinutos: +e.target.value }))}/></label>
+          <button className="primary-button span-2" disabled={busy}>Salvar desfecho e recalcular</button>
+        </form>
+        <p className="subtle">Tempo de reação: abertura do chamado até a primeira decisão no VisionOps. Esforço: soma dos minutos informados na decisão e no desfecho.</p>
+      </Panel>
+      <Panel title="2. Atualizar a base e retreinar" subtitle="Importação protegida por chave administrativa. O arquivo substitui chamados com o mesmo número.">
+        <div className="form-grid">
+          <label className="span-2"><span>Chave administrativa do backend</span><input type="password" value={token} onChange={e => setToken(e.target.value)} autoComplete="off"/></label>
+          <label className="span-2"><span>Exportação CSV de incidentes recentes</span><input type="file" accept=".csv" disabled={busy || !token} onChange={e => { const f = e.target.files?.[0]; if (f) importHistory(f); e.target.value = '' }}/></label>
+          <a className="ghost-button span-2" href={apiUrl('/api/data/template')}>Baixar modelo de atualização</a>
+        </div>
+        <p>{status.adminConfigurado ? 'O backend está preparado para receber uma atualização autenticada.' : 'A atualização está bloqueada até configurar VISIONOPS_ADMIN_TOKEN no backend.'}</p>
+        <p className="subtle">O retreino recalcula volume, risco e P2/P3. Registros sem duração ou resolução entram no volume, mas não no treino do risco até terem desfecho conhecido.</p>
+      </Panel>
+    </div>
+    {error && <div role="alert" className="error-state">{error}</div>}
+    {message && <p role="status" className="save-success"><CheckCircle2 size={17}/>{message}</p>}
+    <div className="method-note"><ShieldCheck/><p><strong>Interpretação.</strong> {metrics.nota} {status.notaPersistencia}</p></div>
+  </>
+}
+
 function AppShell() {
   const route = (): Page => nav.some(n => n.id === window.location.hash.slice(1)) ? window.location.hash.slice(1) as Page : 'overview'
   const [page, setPage] = useState<Page>(route)
@@ -278,6 +342,7 @@ function AppShell() {
     : page === 'diagnostics' ? <DiagnosticsPage/>
     : page === 'optimization' ? <ProductPlan navigate={navigate}/>
     : page === 'capacity' ? <TeamPlan navigate={navigate}/>
+    : page === 'pilot' ? <PilotPage/>
     : page === 'monitor' ? <ForecastHealth/>
     : page === 'models' ? <ModelsPage/>
     : <AuditPage/>
@@ -293,6 +358,7 @@ function AppShell() {
         {navButton('overview')}
         <span className="nav-section">Atendimento</span>{navButton('queue')}
         <span className="nav-section">Planejamento</span>{navButton('capacity')}{navButton('optimization')}
+        <span className="nav-section">Operação</span>{navButton('pilot')}
         <span className="nav-section">Investigação</span>{navButton('diagnostics')}
         <details className="technical-nav" open={['monitor', 'models', 'audit'].includes(page) || undefined}><summary>Dados e modelos</summary>{navButton('monitor')}{navButton('models')}{navButton('audit')}</details>
       </nav>
@@ -300,7 +366,7 @@ function AppShell() {
       <div className="sidebar-status"><Database size={18}/><div><strong>Base histórica</strong><span>Jan/2023 a dez/2025</span></div></div>
     </aside>
     <main id="main-content" tabIndex={-1}>
-      <header className="topbar"><button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><span className="history-badge">Exercício com dados históricos</span><button className="ghost-button" aria-expanded={help} onClick={() => setHelp(v => !v)}>Como usar</button></div></header>
+      <header className="topbar"><button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><span className="history-badge">Histórico e piloto controlado</span><button className="ghost-button" aria-expanded={help} onClick={() => setHelp(v => !v)}>Como usar</button></div></header>
       <div className="workspace">
         {help && <section className="usage-guide"><h2>Do risco ao encaminhamento</h2><ol><li>Abra <strong>Revisar chamados</strong> e escolha o período.</li><li>Filtre o risco e selecione um chamado na lista.</li><li>Confira a recomendação e registre sua decisão no painel ao lado.</li></ol><p><strong>OLA</strong> é o prazo interno de atendimento definido na base. <strong>Risco</strong> é uma estimativa de descumprimento, não um atraso confirmado. O registro fica no VisionOps e não aciona um sistema externo.</p><button className="text-button" onClick={() => setHelp(false)}>Fechar orientações</button></section>}
         {workspace}

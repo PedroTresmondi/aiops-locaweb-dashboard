@@ -60,6 +60,7 @@ class ResultadoRiscoOLA:
     limiar_alto: float
     inicio_base: pd.Timestamp
     inicio_holdout: pd.Timestamp
+    inicio_validacao: pd.Timestamp
     fim_holdout: pd.Timestamp
     perfil_neutro: dict[str, object]
 
@@ -179,7 +180,8 @@ class ResultadoRiscoOLA:
 
 def preparar_base_risco(df: pd.DataFrame) -> pd.DataFrame:
     """Filtra o universo elegível e cria somente features disponíveis na abertura."""
-    base = df[df["Elegivel_KPI_Regra"].astype(bool)].copy()
+    known = df["Desfecho_Conhecido"].astype(bool) if "Desfecho_Conhecido" in df else pd.Series(True, index=df.index)
+    base = df[df["Elegivel_KPI_Regra"].astype(bool) & known].copy()
     base["Aberto"] = pd.to_datetime(base["Aberto"])
     base = base.sort_values("Aberto").reset_index(drop=True)
     for coluna in CATEGORICAS:
@@ -245,13 +247,16 @@ def _metricas_classificacao(y: pd.Series, p: np.ndarray) -> dict[str, float]:
 def executar_pipeline_risco(df: pd.DataFrame) -> ResultadoRiscoOLA:
     base = preparar_base_risco(df)
     inicio_base = base["Aberto"].min().normalize()
-    treino = base["Aberto"] < pd.Timestamp("2025-10-01")
-    validacao = (base["Aberto"] >= pd.Timestamp("2025-10-01")) & (
-        base["Aberto"] < pd.Timestamp("2025-12-01")
-    )
-    holdout = base["Aberto"] >= pd.Timestamp("2025-12-01")
-    if min(int(treino.sum()), int(validacao.sum()), int(holdout.sum())) == 0:
-        raise ValueError("A base não contém as janelas temporais esperadas para o modelo de risco.")
+    fim = base["Aberto"].max().normalize()
+    inicio_holdout = fim - pd.Timedelta(days=30)
+    inicio_validacao = inicio_holdout - pd.Timedelta(days=61)
+    treino = base["Aberto"] < inicio_validacao
+    validacao = (base["Aberto"] >= inicio_validacao) & (base["Aberto"] < inicio_holdout)
+    holdout = base["Aberto"] >= inicio_holdout
+    if min(int(treino.sum()), int(validacao.sum()), int(holdout.sum())) < 30:
+        raise ValueError("A base precisa de ao menos 30 incidentes elegíveis com desfecho em cada janela temporal de treino, validação e teste.")
+    if any(base.loc[mask, "alvo"].nunique() < 2 for mask in (treino, validacao, holdout)):
+        raise ValueError("Cada janela temporal precisa conter casos com e sem violação de OLA.")
 
     x_treino, y_treino = base.loc[treino, FEATURES_RISCO], base.loc[treino, "alvo"]
     x_valid, y_valid = base.loc[validacao, FEATURES_RISCO], base.loc[validacao, "alvo"]
@@ -355,6 +360,20 @@ def executar_pipeline_risco(df: pd.DataFrame) -> ResultadoRiscoOLA:
         )
     importancias_df = pd.DataFrame(importancias).sort_values("queda_pr_auc", ascending=False)
 
+    # Depois de preservar o último mês como teste imparcial, a versão operacional
+    # pode aprender com treino + validação. Mantemos dezembro/2025 exatamente como
+    # a versão auditada da entrega; esta promoção só acontece após uma atualização.
+    if fim > pd.Timestamp("2025-12-31"):
+        promocao = treino | validacao
+        for modelo in modelos.values():
+            modelo.fit(base.loc[promocao, FEATURES_RISCO], base.loc[promocao, "alvo"])
+        perfil_neutro = {
+            "Prioridade_Cod": int(base.loc[promocao, "Prioridade_Cod"].median()),
+            "Produto": str(base.loc[promocao, "Produto"].mode().iloc[0]),
+            "Categoria": str(base.loc[promocao, "Categoria"].mode().iloc[0]),
+            "Grupo designado": str(base.loc[promocao, "Grupo designado"].mode().iloc[0]),
+        }
+
     return ResultadoRiscoOLA(
         modelos=modelos,
         calibrador=calibrador,
@@ -368,6 +387,7 @@ def executar_pipeline_risco(df: pd.DataFrame) -> ResultadoRiscoOLA:
         limiar_alto=limiar_alto,
         inicio_base=inicio_base,
         inicio_holdout=base.loc[holdout, "Aberto"].min().normalize(),
+        inicio_validacao=base.loc[validacao, "Aberto"].min().normalize(),
         fim_holdout=base.loc[holdout, "Aberto"].max().normalize(),
         perfil_neutro=perfil_neutro,
     )

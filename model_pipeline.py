@@ -526,17 +526,18 @@ def _componente_operacional(horizonte_dias: int):
 
 def _avaliar_modelo_operacional(serie: pd.DataFrame):
     """Seleciona pesos em out/nov e preserva dezembro como holdout final."""
-    folds = [
-        (pd.Timestamp("2025-10-16"), pd.Timestamp("2025-10-31")),
-        (pd.Timestamp("2025-11-01"), pd.Timestamp("2025-11-15")),
-        (pd.Timestamp("2025-11-16"), pd.Timestamp("2025-11-30")),
-    ]
     pesos_candidatos = np.arange(0.0, 1.01, 0.1)
     metricas_saida: list[dict[str, float | str]] = []
     backtests_saida: list[pd.DataFrame] = []
     importancias_saida: list[pd.DataFrame] = []
     previsoes: dict[str, dict[str, float | pd.Timestamp]] = {}
     ultima_data = pd.Timestamp(serie["data"].max())
+    inicio_holdout, fim_holdout = ultima_data - pd.Timedelta(days=30), ultima_data
+    folds = [
+        (inicio_holdout - pd.Timedelta(days=46), inicio_holdout - pd.Timedelta(days=31)),
+        (inicio_holdout - pd.Timedelta(days=30), inicio_holdout - pd.Timedelta(days=16)),
+        (inicio_holdout - pd.Timedelta(days=15), inicio_holdout - pd.Timedelta(days=1)),
+    ]
 
     for horizonte, dias in [("D+1", 1), ("D+7", 7)]:
         alvo_baseline = f"target_incidentes_d{dias}"
@@ -545,7 +546,8 @@ def _avaliar_modelo_operacional(serie: pd.DataFrame):
         operacional = preparar_serie_operacional(serie, dias).dropna(
             subset=FEATURES_OPERACIONAIS + ["target"]
         )
-        componente, inicio_componente, nome_componente = _componente_operacional(dias)
+        componente, _, nome_componente = _componente_operacional(dias)
+        inicio_componente = pd.Timestamp(serie["data"].min()) if dias == 1 else ultima_data - pd.Timedelta(days=121)
 
         previsoes_cv: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         for inicio, fim in folds:
@@ -584,7 +586,6 @@ def _avaliar_modelo_operacional(serie: pd.DataFrame):
             [real - (peso_base * pred_base + peso_op * pred_op) for real, pred_base, pred_op in previsoes_cv]
         )
 
-        inicio_holdout, fim_holdout = pd.Timestamp("2025-12-01"), pd.Timestamp("2025-12-31")
         teste_base = baseline[
             (baseline["data_alvo"] >= inicio_holdout) & (baseline["data_alvo"] <= fim_holdout)
         ]

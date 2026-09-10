@@ -41,6 +41,9 @@ passo 3 (ping).
 5. Voltar ao Render → serviço → **Environment** → `CORS_ORIGINS` = `https://visionops-ai.vercel.app`
    → salvar (redeploy automático). *(O regex `*.vercel.app` já cobre isso, mas deixar explícito
    evita surpresa se o domínio mudar.)*
+6. Para habilitar a tela **Operação piloto**, definir também `VISIONOPS_ADMIN_TOKEN` com uma
+   chave longa. A chave é digitada apenas no formulário de atualização e não deve entrar no Git.
+   No plano gratuito, os arquivos e o SQLite não são duráveis; use essa função como demonstração.
 
 ### 3. Manter o Render acordado (grátis)
 

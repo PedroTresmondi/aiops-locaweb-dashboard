@@ -255,6 +255,8 @@ main { background: #09131f; }
 .decision-panel { background: #102238; border-color: #29445f; }
 .form-grid label > span { color: #93a4b7; }
 .form-grid input, .form-grid select { color: #dfe8f2; background: #0b1725; border-color: #29394e; }
+.form-grid input[type=file] { height: auto; min-height: 48px; padding: 12px; }
+.pilot-stats { margin-top: 17px; }
 .form-grid input:focus, .form-grid select:focus { border-color: #4d83ca; box-shadow: 0 0 0 3px rgba(63,127,217,.14); }
 .form-grid input::-webkit-calendar-picker-indicator { filter: invert(.75); }
 .primary-button { background: #2e6fae; }

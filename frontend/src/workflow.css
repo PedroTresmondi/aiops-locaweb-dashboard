@@ -47,7 +47,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .explain .panel { margin-top: 10px; }
 .period-controls { display: flex; align-items: end; gap: 16px; flex-wrap: wrap; margin: 18px 0; padding: 18px; background: #101d2b; border: 1px solid #2b3c50; border-radius: 8px; }
 .period-controls label, .decision-form label, .queue-search { display: flex; flex-direction: column; gap: 8px; color: #bbcbdc; font-size: 12px; }
-.period-controls input, .period-controls select, .decision-form select, .decision-form textarea, .queue-search input { border: 1px solid #3a4d64; border-radius: 6px; padding: 10px 12px; background: #0b1623; color: #f0f5fa; font: inherit; min-height: 40px; }
+.period-controls input, .period-controls select, .decision-form input, .decision-form select, .decision-form textarea, .queue-search input { border: 1px solid #3a4d64; border-radius: 6px; padding: 10px 12px; background: #0b1623; color: #f0f5fa; font: inherit; min-height: 40px; }
 .period-controls input[type=number] { max-width: 280px; width: 100%; }
 .period-controls input[type=file] { max-width: 100%; }
 .subtle { color: #a9b9cb; font-size: 12px; line-height: 1.65; }
