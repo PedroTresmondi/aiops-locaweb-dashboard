@@ -8,11 +8,11 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { api, apiUrl } from './api'
-import { WorkflowProvider, StartPage, WorkQueue, ProductPlan, TeamPlan, ForecastHealth, Explain, ContextNote, fullDate, parseCsv, type Page } from './Workflow'
+import { api } from './api'
+import { WorkflowProvider, StartPage, WorkQueue, ProductPlan, TeamPlan, ForecastHealth, Explain, ContextNote, fullDate, type Page } from './Workflow'
 import type {
   AdvancedModel, Capacity, Diagnostic, Drift, ItemFila, ModelStatus, Models, Optimization, Overview,
-  DataStatus, Perfil, PilotMetrics, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
+  Perfil, PriorityForecast, RespostaFila, ResumoAcoes, Segmentation, TriageResult,
 } from './types'
 
 
@@ -23,7 +23,7 @@ const nav: { id: Page; label: string; icon: typeof Activity }[] = [
   { id: 'diagnostics', label: 'Analisar problemas', icon: Target },
   { id: 'optimization', label: 'Revisar produtos', icon: SlidersHorizontal },
   { id: 'capacity', label: 'Planejar equipe', icon: Users },
-  { id: 'pilot', label: 'Operação piloto', icon: Activity },
+  { id: 'evidence', label: 'Resultado operacional', icon: Activity },
   { id: 'monitor', label: 'Situação dos modelos', icon: Radar },
   { id: 'models', label: 'Validação dos modelos', icon: BarChart3 },
   { id: 'audit', label: 'Qualidade dos dados', icon: Database },
@@ -256,66 +256,59 @@ function AuditPage() {
   </>
 }
 
-function PilotPage() {
-  const [metrics, setMetrics] = useState<PilotMetrics>()
-  const [status, setStatus] = useState<DataStatus>()
+function EvidencePage() {
+  const [result, setResult] = useState<{ overview: Overview; models: Models; priorities: PriorityForecast; status: ModelStatus }>()
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [token, setToken] = useState('')
-  const [outcome, setOutcome] = useState({ ticketRef: '', olaViolado: 'false', resolvidoEm: '', esforcoMinutos: 0 })
-  const load = () => Promise.all([api<PilotMetrics>('/api/pilot/metrics'), api<DataStatus>('/api/data/status')]).then(([m, s]) => { setMetrics(m); setStatus(s) }).catch(e => setError(e.message))
+  async function load() {
+    setBusy(true); setError('')
+    try {
+      const [overview, models, priorities, status] = await Promise.all([
+        api<Overview>('/api/overview'), api<Models>('/api/models'),
+        api<PriorityForecast>('/api/forecast/priorities'), api<ModelStatus>('/api/model-status'),
+      ])
+      setResult({ overview, models, priorities, status })
+    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
   useEffect(() => { load() }, [])
-  async function saveOutcome(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError(''); setMessage('')
-    try {
-      await api('/api/pilot/outcomes', { method: 'POST', body: JSON.stringify({ ...outcome, olaViolado: outcome.olaViolado === 'true', resolvidoEm: outcome.resolvidoEm || null }) })
-      setMessage('Desfecho salvo. As métricas do piloto foram recalculadas.'); await load()
-    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
-  }
-  async function importHistory(file: File) {
-    setBusy(true); setError(''); setMessage('')
-    try {
-      const records = parseCsv(await file.text())
-      if (records.length > 100000) throw new Error('Importe até 100.000 incidentes por arquivo.')
-      const result = await api<{ importacao: { recebidos: number; novos: number; atualizados: number; snapshotDepois: string }; retreino: { status: string } }>('/api/data/import', { method: 'POST', headers: { 'X-VisionOps-Admin': token }, body: JSON.stringify({ itens: records, retreinar: true }) })
-      setMessage(`${result.importacao.recebidos} registros processados: ${result.importacao.novos} novos e ${result.importacao.atualizados} atualizados. Retreino ${result.retreino.status}.`); await load()
-    } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
-  }
-  if (!metrics || !status) return error ? <ErrorState message={error}/> : <Loading label="Carregando operação piloto"/>
+  if (!result) return error ? <ErrorState message={error}/> : <Loading label="Recalculando evidências do dataset"/>
+  const { overview, models, priorities, status } = result
+  const selected = Math.round(models.risk.amostra * models.risk.filaAlta)
+  const captured = Math.round(models.risk.violacoes * models.risk.captura)
   return <>
-    <PageTitle eyebrow="Próximos passos implementados" title="Operação piloto e atualização" copy="Meça o uso, informe desfechos e revalide os modelos com uma nova exportação de incidentes."/>
-    <ContextNote>Fonte atual: {status.origem} · {int.format(status.incidentes)} incidentes · dados até {fullDate(status.snapshot)}.</ContextNote>
-    <div className="stats-grid pilot-stats">
-      <StatCard icon={<ListChecks/>} label="Chamados com decisão" value={int.format(metrics.chamadosComDecisao)} detail={`${int.format(metrics.chamadosComDesfecho)} com desfecho informado`} tone="navy"/>
-      <StatCard icon={<Clock3/>} label="Tempo médio de reação" value={metrics.tempoReacaoMedioHoras === null ? 'Sem medição' : `${dec.format(metrics.tempoReacaoMedioHoras)} h`} detail={`${metrics.reacoesMedidas} reações calculadas`} tone="orange"/>
-      <StatCard icon={<Activity/>} label="Esforço registrado" value={`${dec.format(metrics.esforcoTotalMinutos)} min`} detail="Decisão e fechamento do piloto" tone="teal"/>
-      <StatCard icon={<ShieldCheck/>} label="Violação de OLA" value={metrics.taxaViolacaoOla === null ? 'Sem desfecho' : pct(metrics.taxaViolacaoOla)} detail={`${metrics.violacoes} violações observadas`} tone="red"/>
+    <PageTitle eyebrow="Teste fora da amostra" title="O que a solução comprovou no dataset?" copy="Resultado reproduzível no último mês, separado do treino e da escolha dos modelos." actions={<button className="ghost-button" disabled={busy} onClick={load}>{busy ? 'Atualizando…' : 'Atualizar resultados'}</button>}/>
+    <ContextNote>Fonte única: dataset fornecido · {int.format(overview.snapshot.incidentes)} incidentes entre {fullDate(overview.snapshot.inicio)} e {fullDate(overview.snapshot.fim)} · teste de risco: {status.risco.holdout}.</ContextNote>
+    <div className="stats-grid evidence-stats">
+      <StatCard icon={<ListChecks/>} label="Fila que exige revisão" value={pct(models.risk.filaAlta)} detail={`${int.format(selected)} de ${int.format(models.risk.amostra)} chamados do teste`} tone="navy"/>
+      <StatCard icon={<ShieldCheck/>} label="Violações encontradas" value={pct(models.risk.captura)} detail={`${int.format(captured)} de ${int.format(models.risk.violacoes)} violações do teste`} tone="orange"/>
+      <StatCard icon={<TrendingUp/>} label="Concentração de risco" value={`${models.risk.lift.toFixed(2).replace('.', ',')}×`} detail={`Fila alta: ${pct(models.risk.precisaoFila)} · média: ${pct(models.risk.prevalencia)}`} tone="teal"/>
+      <StatCard icon={<BarChart3/>} label="Ordenação do risco" value={models.risk.rocAuc.toFixed(3).replace('.', ',')} detail="ROC-AUC no período de teste; não é acurácia" tone="red"/>
     </div>
     <div className="content-grid equal">
-      <Panel title="1. Informar o resultado do piloto" subtitle="Use um chamado importado por CSV que já tenha uma decisão registrada.">
-        <form className="form-grid" onSubmit={saveOutcome}>
-          <label><span>Número do chamado</span><input required value={outcome.ticketRef} onChange={e => setOutcome(s => ({ ...s, ticketRef: e.target.value }))}/></label>
-          <label><span>Resultado de OLA</span><select value={outcome.olaViolado} onChange={e => setOutcome(s => ({ ...s, olaViolado: e.target.value }))}><option value="false">Cumpriu o OLA</option><option value="true">Violou o OLA</option></select></label>
-          <label><span>Data e hora da resolução</span><input type="datetime-local" value={outcome.resolvidoEm} onChange={e => setOutcome(s => ({ ...s, resolvidoEm: e.target.value }))}/></label>
-          <label><span>Esforço no fechamento (minutos)</span><input type="number" min="0" max="10080" value={outcome.esforcoMinutos} onChange={e => setOutcome(s => ({ ...s, esforcoMinutos: +e.target.value }))}/></label>
-          <button className="primary-button span-2" disabled={busy}>Salvar desfecho e recalcular</button>
-        </form>
-        <p className="subtle">Tempo de reação: abertura do chamado até a primeira decisão no VisionOps. Esforço: soma dos minutos informados na decisão e no desfecho.</p>
-      </Panel>
-      <Panel title="2. Atualizar a base e retreinar" subtitle="Importação protegida por chave administrativa. O arquivo substitui chamados com o mesmo número.">
-        <div className="form-grid">
-          <label className="span-2"><span>Chave administrativa do backend</span><input type="password" value={token} onChange={e => setToken(e.target.value)} autoComplete="off"/></label>
-          <label className="span-2"><span>Exportação CSV de incidentes recentes</span><input type="file" accept=".csv" disabled={busy || !token} onChange={e => { const f = e.target.files?.[0]; if (f) importHistory(f); e.target.value = '' }}/></label>
-          <a className="ghost-button span-2" href={apiUrl('/api/data/template')}>Baixar modelo de atualização</a>
+      <Panel title="Decisão que o resultado permite" subtitle="A fila reduz o universo que o analista precisa inspecionar primeiro.">
+        <div className="decision-summary"><CheckCircle2/><div><strong>Revisar primeiro os {int.format(selected)} chamados classificados como risco alto.</strong><p>Essa seleção representa {pct(models.risk.filaAlta)} do teste e reúne {pct(models.risk.captura)} das violações observadas. Depois, avançar para a faixa moderada.</p></div></div>
+        <div className="action-list">
+          <div className="action-item"><span className="rank">1</span><div><strong>Priorizar a fila alta</strong><small>{int.format(captured)} violações em {int.format(selected)} chamados</small></div><div className="rate bad">{pct(models.risk.precisaoFila)}</div></div>
+          <div className="action-item"><span className="rank">2</span><div><strong>Planejar o volume</strong><small>Erro médio visível antes de usar a previsão</small></div><div className="rate">D+1</div></div>
+          <div className="action-item"><span className="rank">3</span><div><strong>Revisar regressões</strong><small>P2/P3 piores que a referência recebem alerta</small></div><div className="rate">Controle</div></div>
         </div>
-        <p>{status.adminConfigurado ? 'O backend está preparado para receber uma atualização autenticada.' : 'A atualização está bloqueada até configurar VISIONOPS_ADMIN_TOKEN no backend.'}</p>
-        <p className="subtle">O retreino recalcula volume, risco e P2/P3. Registros sem duração ou resolução entram no volume, mas não no treino do risco até terem desfecho conhecido.</p>
+      </Panel>
+      <Panel title="Como a validação foi feita" subtitle="Nenhuma métrica depende de sistema, credencial ou dado externo.">
+        <div className="validation-steps">
+          <div><span>Treino</span><strong>{status.risco.treino}</strong><p>Aprende os padrões disponíveis antes da validação.</p></div>
+          <div><span>Seleção</span><strong>{status.risco.validacao}</strong><p>Escolhe pesos, calibração e limiares sem olhar o teste.</p></div>
+          <div><span>Teste final</span><strong>{status.risco.holdout}</strong><p>Mede o resultado que aparece nesta página.</p></div>
+        </div>
       </Panel>
     </div>
+    <Panel title="Qualidade das previsões" subtitle="Resultado do teste temporal; menor MAE é melhor.">
+      <div className="data-table-wrap"><table><thead><tr><th>Modelo</th><th>Horizonte</th><th>MAE</th><th>Referência</th><th>Resultado</th></tr></thead><tbody>
+        {models.volume.map(row => <tr key={`volume-${row.horizonte}`}><td>Volume total</td><td>{row.horizonte}</td><td>{dec.format(row.mae)} chamados</td><td>Referência semanal</td><td className={row.ganho >= 0 ? 'positive' : 'negative'}>{row.ganho >= 0 ? `${pct(row.ganho)} melhor` : `${pct(Math.abs(row.ganho))} pior`}</td></tr>)}
+        {priorities.previsoes.map(row => <tr key={`p${row.prioridade}-${row.horizonte}`}><td>P{row.prioridade}</td><td>{row.horizonte}</td><td>{dec.format(row.validacao.mae)} chamados</td><td>{dec.format(row.validacao.maeBaseline)} chamados</td><td className={(row.validacao.ganho ?? 0) >= 0 ? 'positive' : 'negative'}>{row.validacao.ganho === null ? 'Sem comparação' : row.validacao.ganho >= 0 ? `${pct(row.validacao.ganho)} melhor` : `${pct(Math.abs(row.validacao.ganho))} pior`}</td></tr>)}
+      </tbody></table></div>
+    </Panel>
     {error && <div role="alert" className="error-state">{error}</div>}
-    {message && <p role="status" className="save-success"><CheckCircle2 size={17}/>{message}</p>}
-    <div className="method-note"><ShieldCheck/><p><strong>Interpretação.</strong> {metrics.nota} {status.notaPersistencia}</p></div>
+    <div className="method-note"><ShieldCheck/><p><strong>Limite honesto.</strong> O dataset não contém o instante da primeira ação nem esforço do analista; por isso essas métricas não são inventadas. A evidência disponível é cobertura de violações, concentração de risco e erro fora da amostra.</p></div>
   </>
 }
 
@@ -342,7 +335,7 @@ function AppShell() {
     : page === 'diagnostics' ? <DiagnosticsPage/>
     : page === 'optimization' ? <ProductPlan navigate={navigate}/>
     : page === 'capacity' ? <TeamPlan navigate={navigate}/>
-    : page === 'pilot' ? <PilotPage/>
+    : page === 'evidence' ? <EvidencePage/>
     : page === 'monitor' ? <ForecastHealth/>
     : page === 'models' ? <ModelsPage/>
     : <AuditPage/>
@@ -358,7 +351,7 @@ function AppShell() {
         {navButton('overview')}
         <span className="nav-section">Atendimento</span>{navButton('queue')}
         <span className="nav-section">Planejamento</span>{navButton('capacity')}{navButton('optimization')}
-        <span className="nav-section">Operação</span>{navButton('pilot')}
+        <span className="nav-section">Resultados</span>{navButton('evidence')}
         <span className="nav-section">Investigação</span>{navButton('diagnostics')}
         <details className="technical-nav" open={['monitor', 'models', 'audit'].includes(page) || undefined}><summary>Dados e modelos</summary>{navButton('monitor')}{navButton('models')}{navButton('audit')}</details>
       </nav>
@@ -366,7 +359,7 @@ function AppShell() {
       <div className="sidebar-status"><Database size={18}/><div><strong>Base histórica</strong><span>Jan/2023 a dez/2025</span></div></div>
     </aside>
     <main id="main-content" tabIndex={-1}>
-      <header className="topbar"><button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><span className="history-badge">Histórico e piloto controlado</span><button className="ghost-button" aria-expanded={help} onClick={() => setHelp(v => !v)}>Como usar</button></div></header>
+      <header className="topbar"><button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebar(true)}><Menu/></button><div className="breadcrumb"><current.icon/><span>{current.label}</span></div><div className="top-actions"><span className="history-badge">Dataset histórico validado</span><button className="ghost-button" aria-expanded={help} onClick={() => setHelp(v => !v)}>Como usar</button></div></header>
       <div className="workspace">
         {help && <section className="usage-guide"><h2>Do risco ao encaminhamento</h2><ol><li>Abra <strong>Revisar chamados</strong> e escolha o período.</li><li>Filtre o risco e selecione um chamado na lista.</li><li>Confira a recomendação e registre sua decisão no painel ao lado.</li></ol><p><strong>OLA</strong> é o prazo interno de atendimento definido na base. <strong>Risco</strong> é uma estimativa de descumprimento, não um atraso confirmado. O registro fica no VisionOps e não aciona um sistema externo.</p><button className="text-button" onClick={() => setHelp(false)}>Fechar orientações</button></section>}
         {workspace}

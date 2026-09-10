@@ -55,7 +55,7 @@ ou recomendação. Não há geração de métricas sintéticas nem chamadas a IA
   a tela mostra a curva de sensibilidade e o preço-sombra da capacidade.
 - **Capacidade & ação:** converte a faixa D+1 em analistas-equivalentes a partir de premissas
   editáveis de produtividade, ocupação, indisponibilidade e equipe disponível.
-- **Monitor de dados:** compara a janela de treino do classificador com os dados recentes via
+- **Monitor de dados:** compara a janela de treino com o período final do próprio dataset via
   PSI (Population Stability Index) e sinaliza quando a revalidação/retreino é recomendada —
   atende à recomendação registrada na Sprint 3 (retreinar periodicamente com janela recente).
 - **Modelos & auditoria:** expõe holdouts temporais, benchmarks, calibração, importância das
@@ -226,7 +226,6 @@ streamlit run app.py
 O `Dockerfile` gera o frontend e publica React + API no mesmo serviço. No Render, importe
 o repositório como Blueprint usando `render.yaml`. A versão React não roda no Streamlit
 Community Cloud porque essa plataforma espera um processo Streamlit, não uma API ASGI.
-Defina `VISIONOPS_ADMIN_TOKEN` no backend para habilitar a atualização autenticada da base.
 
 ## Testar
 
@@ -236,10 +235,8 @@ python -m unittest discover -s tests -v
 
 ## Limites de uso
 
-- O dataset inicial é um snapshot. A área **Operação piloto** aceita uma exportação CSV recente,
-  valida e consolida os incidentes por número e recalcula os modelos. A operação exige
-  `VISIONOPS_ADMIN_TOKEN`; o arquivo atualizado deve ficar em disco persistente por meio de
-  `VISIONOPS_CURRENT_DATASET` para sobreviver a novos deploys.
+- O dataset fornecido é a fonte única da entrega: 122.543 incidentes entre janeiro/2023
+  e dezembro/2025. A aplicação não depende de credencial ou sistema externo.
 - O forecast prevê volume total e, separadamente, volumes P2/P3; o classificador de OLA estima risco de incidentes elegíveis.
   A fila operacional pontua um lote (dia real do snapshot ou CSV), não um feed ao vivo.
 - Na fila do snapshot, o campo "violou" é o resultado real do incidente — serve só para
@@ -247,8 +244,8 @@ python -m unittest discover -s tests -v
 - Coeficientes e contribuições por fator descrevem o comportamento do modelo, não causalidade.
 - Converter volume em headcount exige produtividade/tempo por analista, ausentes na fonte;
   por isso o simulador torna essas premissas explícitas e editáveis.
-- O piloto mede tempo entre abertura e primeira decisão, esforço informado e OLA observado.
-  São métricas observacionais; sem grupo de controle, não provam violações evitadas.
+- O dataset não contém instante da primeira ação nem esforço do analista; essas métricas
+  não são estimadas. A validação usa apenas OLA, volume e atributos presentes na fonte.
 - A alocação preventiva (MILP) usa capacidade e custo por produto como parâmetros ilustrativos
   — precisam ser calibrados com a operação real da Locaweb.
 - O perfil operacional é uma visão de trabalho, não autenticação.
@@ -277,24 +274,18 @@ de cobertura futura. A API inclui as linhas de teste para reproduzir os cálculo
 O principal resultado de priorização é **39,2% das 125 violações em 15,8% dos 1.438
 chamados** no teste de dezembro: 2,48 vezes a concentração média. Isso não é redução
 comprovada de atrasos. O app não executa encaminhamentos no ITSM e não foi homologado
-na operação da Locaweb. A área de piloto passa a medir tempo de reação, esforço e OLA
-quando a equipe registra decisões e desfechos reais.
-O SQLite local é adequado à demonstração; sem armazenamento persistente configurado,
-reinicializações/deploys do serviço gratuito podem perder registros. O CSV da fila pontua
-chamados; a exportação completa da área Operação piloto atualiza a base de treino.
+na operação da Locaweb. A página **Resultado operacional** apresenta somente evidências
+reproduzíveis calculadas sobre o período de teste do dataset.
+O SQLite local guarda apenas decisões de demonstração e pode ser reiniciado no serviço
+gratuito. Isso não altera o dataset, os modelos nem as métricas de validação.
 
-## Operação piloto e atualização dos modelos
+## Resultado operacional sobre o dataset
 
-- `POST /api/actions`: registra a decisão, abertura, esforço e se é exercício histórico.
-- `POST /api/pilot/outcomes`: registra o desfecho e a ocorrência de violação.
-- `GET /api/pilot/metrics`: calcula cobertura de desfechos, tempo médio de reação,
-  esforço total e taxa observada de OLA. Exercícios históricos ficam fora desse cálculo.
-- `POST /api/data/import`: recebe até 100 mil incidentes, autentica por
-  `X-VisionOps-Admin`, valida datas/duração, consolida duplicatas e retreina.
-- `POST /api/models/retrain`: força o recálculo sobre a base persistida.
+- O último mês permanece separado como teste final do classificador.
+- A fila de alto risco reúne 15,8% dos chamados e 39,2% das violações observadas.
+- A concentração é 2,48 vezes a taxa média do período.
+- Volume total e demanda P2/P3 mostram MAE e comparação com a referência semanal.
+- Resultados piores que a referência aparecem explicitamente como regressão.
 
-As janelas de seleção e teste se deslocam com a data mais recente. O último mês permanece
-como teste; os dois meses anteriores selecionam/calibram os modelos. O modelo operacional
-de risco promovido aprende com treino e validação, sem usar o mês de teste. O volume total
-e P2/P3 também recalculam previsões e métricas. Se qualquer pipeline falhar, a importação
-é revertida e a base anterior volta a responder.
+Todas essas evidências são recalculáveis a partir de `dataset_limpo.parquet`; nenhuma delas
+depende de acesso à Locaweb, integração com ITSM ou dado posterior ao arquivo fornecido.

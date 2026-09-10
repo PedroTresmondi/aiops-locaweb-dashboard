@@ -839,8 +839,6 @@ def model_status() -> dict:
     motivos = []
     if deriva["revalidacaoRecomendada"]:
         motivos.append(f"PSI de deriva em {deriva['piorPsi']} (limite 0,20).")
-    if dias_desde > 45:
-        motivos.append(f"Snapshot com {dias_desde} dias — acima do ciclo de 45 dias.")
 
     return {
         "snapshot": snapshot.date().isoformat(),
@@ -864,7 +862,7 @@ def model_status() -> dict:
             "volumeRazao": deriva["volumeMedioDia"]["razao"],
             "revalidacaoRecomendada": deriva["revalidacaoRecomendada"],
         },
-        "revalidacaoRecomendada": bool(deriva["revalidacaoRecomendada"] or dias_desde > 45),
+        "revalidacaoRecomendada": bool(deriva["revalidacaoRecomendada"]),
         "motivos": motivos,
     }
 

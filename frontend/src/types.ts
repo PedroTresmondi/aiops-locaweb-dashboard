@@ -52,18 +52,6 @@ export type Models = {
 
 export type Perfil = 'analista' | 'gestor' | 'administrador'
 
-export type PilotMetrics = {
-  chamadosComDecisao: number; chamadosComDesfecho: number; coberturaDesfecho: number | null
-  tempoReacaoMedioHoras: number | null; reacoesMedidas: number; esforcoTotalMinutos: number
-  taxaViolacaoOla: number | null; violacoes: number; nota: string
-}
-
-export type DataStatus = {
-  origem: string; persistenciaConfigurada: boolean; arquivoAtualizadoExiste: boolean
-  incidentes: number; snapshot: string; desfechosConhecidos: number
-  notaPersistencia: string; atualizacaoProtegida: boolean; adminConfigurado: boolean
-}
-
 export type FatorRisco = {
   fator: string
   valor: string
