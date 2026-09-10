@@ -1,5 +1,14 @@
 export type Forecast = { horizonte: string; dataAlvo: string; ponto: number; inferior: number; superior: number }
 
+export type PriorityForecast = {
+  snapshot: string; nota: string; metodo: string
+  previsoes: (Forecast & {
+    prioridade: number; modelo: string
+    validacao: { inicio: string; fim: string; dias: number; mae: number; maeBaseline: number; ganho: number | null; wape: number | null; coberturaFaixa: number }
+    backtest: { data: string; real: number; previsto: number; baseline: number }[]
+  })[]
+}
+
 export type Overview = {
   snapshot: { inicio: string; fim: string; incidentes: number; elegiveis: number; violacoes: number; taxaOla: number }
   forecast: Forecast[]
@@ -159,4 +168,3 @@ export type AdvancedModel = {
   importancias: { horizonte: string; variavel: string; importancia: number; eFeriado: boolean }[]
   feriados: { data: string; nome: string }[]
 }
-

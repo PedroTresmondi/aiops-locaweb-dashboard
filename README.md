@@ -238,7 +238,7 @@ python -m unittest discover -s tests -v
 - O dataset é um snapshot; a leitura via MySQL usa a mesma carga de 122.543 incidentes. Não há
   ingestão contínua — o Monitor de dados existe justamente para sinalizar quando o snapshot
   ficou velho demais ou a distribuição mudou.
-- O forecast prevê volume total; o classificador de OLA estima risco de incidentes elegíveis.
+- O forecast prevê volume total e, separadamente, volumes P2/P3; o classificador de OLA estima risco de incidentes elegíveis.
   A fila operacional pontua um lote (dia real do snapshot ou CSV), não um feed ao vivo.
 - Na fila do snapshot, o campo "violou" é o resultado real do incidente — serve só para
   conferir a ordenação; não estava disponível na abertura e não entra no modelo.
@@ -250,3 +250,32 @@ python -m unittest discover -s tests -v
 - A alocação preventiva (MILP) usa capacidade e custo por produto como parâmetros ilustrativos
   — precisam ser calibrados com a operação real da Locaweb.
 - O perfil operacional é uma visão de trabalho, não autenticação.
+
+## Previsão por prioridade e evidência da entrega
+
+Em **Planejar equipe**, a seção P2/P3 mostra as estimativas para a data aplicada,
+intervalos empíricos e comparação observado versus previsto. API: `GET /api/forecast/priorities`.
+`backend/priority_forecast.py` constrói séries diárias completas por prioridade original,
+com dias de volume zero. Compara Ridge com repetição semanal antes do teste e usa apenas
+contagens conhecidas no fechamento de cada dia-base. D+7 é um dia, não a soma da semana.
+O método por prioridade é independente do modelo de volume total e não altera o simulador.
+
+| Recorte | MAE do método | MAE repetindo a semana anterior | Resultado no teste |
+| --- | ---: | ---: | --- |
+| P2 D+1 | 52,75 | 30,10 | Erro maior, revisão necessária |
+| P2 D+7 | 41,53 | 32,88 | Erro maior, revisão necessária |
+| P3 D+1 | 73,97 | 106,67 | Erro 30,65% menor |
+| P3 D+7 | 139,25 | 128,12 | Erro maior, revisão necessária |
+
+Unidade: chamados/dia. Teste D+1: 02–31/12/2025 (30 dias); D+7: 08–31/12/2025
+(24 dias). A seleção termina antes de dezembro. Resultados negativos permanecem visíveis
+na interface. A faixa usa o percentil 80 dos erros absolutos de validação, sem garantia
+de cobertura futura. A API inclui as linhas de teste para reproduzir os cálculos.
+
+O principal resultado de priorização é **39,2% das 125 violações em 15,8% dos 1.438
+chamados** no teste de dezembro: 2,48 vezes a concentração média. Isso não é redução
+comprovada de atrasos. O app não executa encaminhamentos no ITSM, não foi homologado
+na operação da Locaweb e não mede ganhos causais de tempo de reação ou esforço.
+O SQLite local é adequado à demonstração; sem armazenamento persistente configurado,
+reinicializações/deploys do serviço gratuito podem perder registros. O CSV pontua
+chamados novos, mas não atualiza automaticamente a base de treino.

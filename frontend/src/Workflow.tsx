@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode, type Di
 import { ArrowRight, AlertTriangle, CheckCircle2, ListChecks, TrendingUp, Users, ShieldCheck, Download } from 'lucide-react'
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import { api, apiUrl } from './api'
-import type { Overview, RespostaFila, ItemFila, Perfil, Optimization, Capacity, ModelStatus, Drift } from './types'
+import type { Overview, RespostaFila, ItemFila, Perfil, Optimization, Capacity, ModelStatus, Drift, PriorityForecast } from './types'
 
 export type Page = 'overview' | 'queue' | 'triage' | 'diagnostics' | 'optimization' | 'capacity' | 'monitor' | 'models' | 'audit'
 export type Navigate = (page: Page) => void
@@ -280,8 +280,32 @@ export function TeamPlan({ navigate }: { navigate: Navigate }) {
       <p>Se a equipe não cobrir o cenário escolhido, revise a escala, a produtividade esperada e a possibilidade de apoio antes de assumir novos compromissos.</p>
       <Explain title="Como a necessidade foi calculada"><p>Capacidade por analista: {applied.produtividade} × {percent(applied.ocupacao / 100)} × {percent(1 - applied.indisponibilidade / 100)} = {decimal.format(data.capacidadeEfetiva)} chamados por dia. A demanda de cada cenário é dividida por essa capacidade e arredondada para cima.</p><p>A faixa da previsão representa incerteza. A base não informa produtividade, escala ou ausências reais da equipe.</p></Explain>
     </>}</Box></div>
+    <PriorityDemand horizon={applied.horizonte}/>
     <div className="next-step"><span>Já definiu a equipe? Escolha os produtos para revisão.</span><button className="ghost-button" onClick={() => navigate('optimization')}>Planejar revisão de produtos <ArrowRight size={16}/></button></div>
   </>
+}
+
+function PriorityDemand({ horizon }: { horizon: string }) {
+  const result = useRead<PriorityForecast>('/api/forecast/priorities')
+  const forecasts = result.data?.previsoes.filter(f => f.horizonte === horizon)
+  return <Box title="3. Confira a demanda P2 e P3" subtitle="Estimativas diárias por prioridade original para a data aplicada acima.">
+    {!result.data ? <Wait error={result.error} retry={result.retry}/> : <>
+      <div className="metric-strip">{forecasts?.map(f => <Metric key={f.prioridade} label={`P${f.prioridade} · ${fullDate(f.dataAlvo)}`} value={`${integer.format(f.ponto)} chamados`}>Faixa estimada: {integer.format(f.inferior)} a {integer.format(f.superior)} chamados</Metric>)}</div>
+      {forecasts?.some(f => f.validacao.ganho !== null && f.validacao.ganho < 0) && <div className="review-banner"><AlertTriangle/><div><strong>Estimativas que exigem revisão: {forecasts.filter(f => f.validacao.ganho !== null && f.validacao.ganho < 0).map(f => `P${f.prioridade}`).join(', ')}.</strong><p>Nesses recortes, o modelo teve mais erro no teste que repetir a semana anterior. Confira a comparação abaixo e não use essas estimativas sozinhas para definir a escala.</p></div></div>}
+      <p>Confira se a escala tem pessoas habilitadas para atender cada prioridade. Os volumes abaixo já fazem parte do contexto da demanda total: não os some novamente ao cálculo de equipe.</p>
+      <p className="subtle">Base até {fullDate(result.data.snapshot)}. {horizon === 'D+7' ? 'D+7 estima o volume do sétimo dia, não a soma da semana.' : 'D+1 estima o dia seguinte ao fim da base.'} As estimativas por prioridade são independentes do modelo de volume total.</p>
+      <Explain title="Conferir a qualidade da previsão por prioridade">
+        <p>{result.data.metodo}</p>
+        {forecasts?.map(f => <div key={f.prioridade}>
+          <h3>P{f.prioridade}: {f.modelo}</h3>
+          <p>Teste de {fullDate(f.validacao.inicio)} a {fullDate(f.validacao.fim)}, com {f.validacao.dias} dias. Erro médio absoluto: {decimal.format(f.validacao.mae)} chamados por dia. Repetir a semana anterior teria erro de {decimal.format(f.validacao.maeBaseline)} chamados por dia.</p>
+          <p>{f.validacao.ganho === null ? 'A comparação percentual não se aplica porque a referência teve erro zero.' : f.validacao.ganho > 0 ? `O erro no teste foi ${percent(f.validacao.ganho)} menor que o da referência semanal.` : f.validacao.ganho < 0 ? `O erro no teste foi ${percent(-f.validacao.ganho)} maior que o da referência semanal. Revise esta previsão antes de usá-la operacionalmente.` : 'O método selecionado equivale à referência semanal; não houve ganho frente a ela.'} A faixa cobriu {percent(f.validacao.coberturaFaixa)} dos dias de teste.</p>
+          <div className="chart-md"><ResponsiveContainer width="100%" height="100%"><AreaChart data={f.backtest}><CartesianGrid vertical={false}/><XAxis dataKey="data" tickFormatter={fullDate} minTickGap={65}/><YAxis/><Tooltip labelFormatter={x => fullDate(String(x))}/><Area isAnimationActive={false} dataKey="real" name="Volume observado" stroke="#7fa9d7" fill="#24425f"/><Area isAnimationActive={false} dataKey="previsto" name="Previsão no teste" stroke="#ff804a" fill="transparent"/></AreaChart></ResponsiveContainer></div>
+        </div>)}
+        <p>{result.data.nota}</p>
+      </Explain>
+    </>}
+  </Box>
 }
 
 export function ForecastHealth() {

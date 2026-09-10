@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from model_pipeline import executar_pipeline, avaliar_extensao_avancada
 from risk_pipeline import executar_pipeline_risco
 
-from backend import datasource, legacy_forecast, monitoring, optimization, segmentation, store
+from backend import datasource, legacy_forecast, monitoring, optimization, priority_forecast, segmentation, store
 from backend.telemetry import configurar_telemetria
 from backend.resources import cached_resource
 
@@ -182,6 +182,19 @@ def overview() -> dict:
             for row in model.metricas_operacionais.itertuples()
         },
     }
+
+
+@cached_resource
+def priority_model():
+    return priority_forecast.prever_prioridades(load_data())
+
+
+@app.get("/api/forecast/priorities")
+def forecast_priorities() -> dict:
+    try:
+        return priority_model()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/options")
